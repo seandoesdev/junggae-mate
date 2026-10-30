@@ -1,14 +1,19 @@
-"""업무 로직: 구조화 비교(경로 A) + 문서 근거(경로 B) + 상담 문맥 → 근거가 연결된 AI 초안."""
+"""매물 조회(구조화 사실)와 고객 자료 본문 작성.
+
+고객 자료 본문은 문장 목록으로 만든다. 각 문장은 출처 id(`c12` 문서 조각, `l3` 매물, `t3` 실거래가)를 가지며,
+본문 문자열에서는 "…입니다[t3]." 처럼 마침표 앞에 표시한다. 근거가 없는 내용은 본문에 넣지 않고
+"추가로 확인할 사항"(to_check)으로 보낸다.
+"""
 import re
 import statistics
 from datetime import date, timedelta
-from typing import Any
 
 from . import llm, rag
-from .audit import record
-from .db import Jsonb
 
 CITY = "서울"  # MVP: 서울 소재 사무소 기준. 지역 필터는 "서울 {구}" 형태로 문서 region과 맞춘다.
+STAGES = ("intro", "visit", "nego", "contract", "done")
+# 시드 정책 문서(생애최초 지원 안내)의 주택가격 기준. 실제 운영에서는 문서 사실(facts)로 관리한다.
+FIRST_HOME_PRICE_LIMIT = 90000
 
 
 class DomainError(ValueError):
@@ -20,8 +25,7 @@ class DomainError(ValueError):
 def eok(price: int | None) -> str:
     if price is None:
         return "-"
-    v = price / 10000
-    return f"{v:.2f}".rstrip("0").rstrip(".") + "억"
+    return f"{price / 10000:.2f}".rstrip("0").rstrip(".") + "억"
 
 
 def region_of(district: str | None) -> str | None:
@@ -30,16 +34,20 @@ def region_of(district: str | None) -> str | None:
 
 # ---------- 매물 (구조화 사실) ----------
 
-_LISTING_COLS = """l.id, l.label, l.title, l.complex_name, l.address, l.district, l.price, l.area_m2::float AS area_m2,
-                   l.floor, l.station, l.station_walk_min, l.park_walk_min, l.lat, l.lng, l.description, l.source,
-                   l.source_date, l.status, l.registered_by, u.name AS registered_by_name, l.created_at"""
+STAGE_ORDER_SQL = "array_position(ARRAY['intro','visit','nego','contract','done'], d.stage)"
+_LISTING_COLS = f"""l.id, l.label, l.title, l.complex_name, l.address, l.district, l.price, l.area_m2::float AS area_m2,
+    l.floor, l.station, l.station_walk_min, l.park_walk_min, l.lat, l.lng, l.description, l.source, l.source_date,
+    l.status, l.agent_id, u.name AS agent_name, l.created_at,
+    COALESCE((SELECT d.stage FROM deals d WHERE d.listing_id = l.id AND d.stage <> 'dropped'
+              ORDER BY {STAGE_ORDER_SQL} DESC LIMIT 1), 'available') AS stage,
+    (SELECT count(*) FROM deals d WHERE d.listing_id = l.id AND d.stage <> 'dropped')::int AS active_deals"""
 
 
 def _serialize_listing(row: dict, history: list[dict], user_id: int | None) -> dict:
     out = dict(row)
     out["source_date"] = str(row["source_date"])
     out["created_at"] = row["created_at"].isoformat()
-    out["mine"] = user_id is not None and row["registered_by"] == user_id
+    out["mine"] = user_id is not None and row["agent_id"] == user_id
     out["price_history"] = [{"price": h["price"], "changed_at": str(h["changed_at"])} for h in history]
     return out
 
@@ -55,7 +63,7 @@ def fetch_listings(conn, tenant_id: int, *, ids: list[int] | None = None, distri
         where.append("l.id = ANY(%s)")
         params.append(ids)
     if mine and user_id is not None:
-        where.append("l.registered_by = %s")
+        where.append("l.agent_id = %s")
         params.append(user_id)
     if district:
         where.append("l.district = %s")
@@ -70,7 +78,7 @@ def fetch_listings(conn, tenant_id: int, *, ids: list[int] | None = None, distri
         where.append("l.station_walk_min <= %s")
         params.append(max_station_walk)
     order = "l.created_at DESC, l.id DESC" if sort == "recent" else "l.price, l.id"
-    rows = conn.execute(f"SELECT {_LISTING_COLS} FROM listings l LEFT JOIN users u ON u.id = l.registered_by "
+    rows = conn.execute(f"SELECT {_LISTING_COLS} FROM listings l LEFT JOIN users u ON u.id = l.agent_id "
                         f"WHERE {' AND '.join(where)} ORDER BY {order}", params).fetchall()
     if not rows:
         return []
@@ -99,22 +107,21 @@ def condition_checks(listing: dict, cond: dict) -> list[dict]:
     checks = []
     if cond.get("budget_max"):
         ok = listing["price"] <= cond["budget_max"]
-        detail = f"{eok(listing['price'])} {'≤' if ok else '>'} 예산 {eok(cond['budget_max'])}"
-        checks.append({"condition": "예산", "ok": ok, "detail": detail})
+        checks.append({"condition": "예산", "ok": ok, "detail": f"{eok(listing['price'])} (예산 {eok(cond['budget_max'])})"})
     if cond.get("area_min"):
         ok = listing["area_m2"] >= float(cond["area_min"])
         checks.append({"condition": "면적", "ok": ok, "detail": f"전용 {listing['area_m2']:g}㎡ (기준 {float(cond['area_min']):g}㎡ 이상)"})
     if cond.get("district"):
         ok = listing["district"] == cond["district"]
-        checks.append({"condition": "지역", "ok": ok, "detail": f"{listing['district']} (희망 {cond['district']})"})
+        checks.append({"condition": "지역", "ok": ok, "detail": listing["district"]})
     if cond.get("station_walk_max") and listing.get("station_walk_min") is not None:
         ok = listing["station_walk_min"] <= cond["station_walk_max"]
-        checks.append({"condition": "역 도보", "ok": ok,
-                       "detail": f"{listing['station']} 도보 {listing['station_walk_min']}분 (기준 {cond['station_walk_max']}분 이내)"})
-    if "공원" in (cond.get("preferences") or []) and listing.get("park_walk_min") is not None:
-        ok = listing["park_walk_min"] <= 10
-        checks.append({"condition": "공원 선호", "ok": ok, "detail": f"공원 도보 {listing['park_walk_min']}분"})
+        checks.append({"condition": "역 거리", "ok": ok, "detail": f"{listing['station']} 도보 {listing['station_walk_min']}분 (기준 {cond['station_walk_max']}분)"})
     return checks
+
+
+def matches(listing: dict, cond: dict) -> bool:
+    return listing["stage"] != "done" and all(c["ok"] for c in condition_checks(listing, cond))
 
 
 def trade_reference(conn, listing: dict) -> dict | None:
@@ -139,115 +146,150 @@ def trade_reference(conn, listing: dict) -> dict | None:
 def condition_warnings(conn, tenant_id: int, cond: dict) -> list[str]:
     warnings = []
     if not cond.get("budget_max"):
-        warnings.append("예산 상한이 비어 있습니다. 필터 조건으로 사용할 수 없습니다.")
+        warnings.append("예산 상한이 비어 있어 맞는 매물을 고를 수 없습니다.")
     if not cond.get("area_min"):
         warnings.append("최소 면적이 비어 있습니다.")
     if not cond.get("district"):
-        warnings.append("희망 지역이 비어 있습니다. 근거 문서의 적용 지역을 판단할 수 없습니다.")
+        warnings.append("희망 지역이 비어 있어 지역별 정책을 확인할 수 없습니다.")
     prefs = cond.get("preferences") or []
     if "역세권" in prefs and (cond.get("station_walk_max") or 0) > 15:
-        warnings.append(f"'역세권' 선호와 역 도보 {cond['station_walk_max']}분 조건이 서로 맞지 않습니다.")
+        warnings.append(f"'역세권'과 역 도보 {cond['station_walk_max']}분 조건이 서로 맞지 않습니다.")
     if cond.get("budget_max") and cond.get("district"):
-        matches = fetch_listings(conn, tenant_id, district=cond["district"], max_price=cond["budget_max"],
-                                 min_area=cond.get("area_min"), max_station_walk=cond.get("station_walk_max"))
-        if not matches:
-            warnings.append("현재 조건을 모두 만족하는 매물이 없습니다. 예산·면적·도보 조건 중 하나를 조정해 보세요.")
+        found = fetch_listings(conn, tenant_id, district=cond["district"], max_price=cond["budget_max"],
+                               min_area=cond.get("area_min"), max_station_walk=cond.get("station_walk_max"))
+        if not found:
+            warnings.append("지금 조건을 모두 만족하는 매물이 없습니다. 예산·면적·역 거리 중 하나를 조정해 보세요.")
     return warnings
 
 
-# ---------- 근거 → claim ----------
+# ---------- 출처 (매물·실거래가) ----------
+
+def listing_evidence(l: dict) -> dict:
+    snippet = (f"매도 희망가 {eok(l['price'])}, 전용 {l['area_m2']:g}㎡, {l.get('floor') or '-'}, "
+               f"{l['station']} 도보 {l['station_walk_min']}분, 공원 도보 {l['park_walk_min']}분. {l['address']}")
+    if len(l["price_history"]) > 1:
+        snippet += " 가격 이력: " + " → ".join(f"{eok(h['price'])}({h['changed_at']})" for h in l["price_history"])
+    return {"id": f"l{l['id']}", "kind": "listing", "type": "data", "type_label": "매물 정보",
+            "title": f"{l['label']} {l['title']} 매물 정보", "org": f"{l['source']} · 담당 {l.get('agent_name') or '-'}",
+            "date": l["source_date"], "effective_date": None, "location": f"매물 {l['label']}", "snippet": snippet,
+            "url": None, "document_id": None, "score": None, "state": "ok", "note": None}
+
+
+def trade_evidence(l: dict, ref: dict) -> dict:
+    return {"id": f"t{l['id']}", "kind": "trade", "type": "data", "type_label": "실거래가",
+            "title": "아파트 매매 실거래가", "org": ref["source"], "date": ref["as_of"], "effective_date": None,
+            "location": f"{l['complex_name']} 유사 면적 · {ref['period']} · {ref['count']}건",
+            "snippet": f"동일 단지·유사 면적 최근 12개월 실거래 {ref['count']}건, 중위 {eok(ref['median_price'])}.",
+            "url": "https://www.data.go.kr/data/15126468/openapi.do", "document_id": None, "score": None,
+            "state": "ok", "note": "신고된 과거 거래 가격입니다. 현재 매도 희망가나 거래 가능 여부를 뜻하지 않습니다."}
+
+
+# ---------- 본문 문장 ----------
 
 def _lead(text: str, limit: int = 170) -> str:
     text = re.sub(r"^\[[^\]]+\]\s*", "", text.strip())
-    text = re.sub(r"\s+", " ", text)
-    sentences = re.split(r"(?<=[.다])\s+", text)
+    text = re.sub(r"^Q\.\s*", "", re.sub(r"\s+", " ", text))
     out = ""
-    for s in sentences:
+    for s in re.split(r"(?<=[.다요])\s+", text):
         if out and len(out) + len(s) > limit:
             break
         out = f"{out} {s}".strip()
     return out[:limit + 40]
 
 
-def template_doc_claims(hits: list[dict], gate: dict, limit: int = 3) -> list[dict]:
-    claims = []
-    ordered = sorted(hits, key=lambda h: (rag.AUTHORITY[h["source_type"]], -h["score"]))
-    for h in ordered:
-        cid = f"c{h['id']}"
-        ev = gate["evidence"][cid]
-        if ev["state"] == "conflict" or ev["badge"] == "시행 전":
-            continue
-        if h["source_type"] == "news":
-            claims.append({"text": f"참고(보조 자료) · {h['title']}: {_lead(h['text'], 110)} 시장 맥락 설명용이며 정책 사실의 근거가 아닙니다.",
-                           "status": "warning", "citations": [cid]})
-        else:
-            claims.append({"text": f"{_lead(h['text'])} ({rag.TYPE_LABEL[h['source_type']]} · {h['title']} · {h['location']})",
-                           "status": "verified", "citations": [cid]})
-        if len(claims) >= limit:
-            break
-    return claims
+def sentence_with(text: str, complex_name: str) -> str | None:
+    """문서 조각에서 단지 이름이 들어간 문장 하나. 조각 앞의 [소제목] 표시는 뗀다."""
+    text = re.sub(r"^\[[^\]]+\]\s*", "", text.strip())
+    return next((s.strip() for s in re.split(r"(?<=[.다)])\s+", text) if complex_name in s), None)
 
 
-def gate_claims(gate: dict) -> list[dict]:
-    out = []
+def with_refs(text: str, cites: list[str]) -> str:
+    """'…입니다.' + [t3] → '…입니다[t3].'"""
+    refs = "".join(f"[{c}]" for c in dict.fromkeys(cites))
+    text = text.strip()
+    if not refs:
+        return text
+    return f"{text[:-1]}{refs}." if text.endswith(".") else f"{text}{refs}"
+
+
+class Body:
+    """본문(opinion) 문장, 확인할 사항, 사용한 출처를 모은다."""
+
+    def __init__(self):
+        self.opinion: list[str] = []
+        self.to_check: list[str] = []
+        self.evidence: dict[str, dict] = {}
+
+    def add(self, ev: dict) -> str:
+        self.evidence.setdefault(ev["id"], ev)
+        return ev["id"]
+
+    def say(self, text: str, cites: list[str]):
+        self.opinion.append(with_refs(text, cites))
+
+    def check(self, text: str, cites: list[str] | None = None):
+        self.to_check.append(with_refs(text, cites or []))
+
+    def result(self) -> dict:
+        used = list(dict.fromkeys(re.findall(r"\[([clt]\d+)\]", " ".join(self.opinion + self.to_check))))
+        return {"opinion": " ".join(self.opinion), "to_check": self.to_check,
+                "sources": [self.evidence[i] for i in used if i in self.evidence]}
+
+
+def josa(word: str, pair: str) -> str:
+    """받침에 맞는 조사. pair는 '이가', '은는', '을를', '으로' 중 하나. josa('시행일', '이가') → '시행일이'"""
+    last = re.sub(r"[\s'\"」』)\]]+$", "", word)[-1:] or " "
+    if last.isdigit():  # 숫자는 읽는 소리 기준: 영·일·삼·육·칠·팔은 받침, 일·칠·팔은 ㄹ 받침
+        batchim, rieul = last in "013678", last in "178"
+    else:
+        code = ord(last) - 0xAC00
+        batchim = 0 <= code < 11172 and code % 28 != 0
+        rieul = batchim and code % 28 == 8
+    if pair == "으로":  # ㄹ 받침과 받침 없음은 '로'
+        return word + ("으로" if batchim and not rieul else "로")
+    return word + (pair[0] if batchim else pair[1])
+
+
+def plain_title(title: str) -> str:
+    """본문 문장에 넣을 문서 제목 (목록용 [샘플] 표시는 뺀다)."""
+    return re.sub(r"^\[샘플\]\s*", "", title)
+
+
+def apply_gate(body: Body, gate: dict):
+    """근거 게이트 결과를 결정론적으로 본문·확인할 사항에 반영한다 (LLM 사용 여부와 무관)."""
     for f in gate["findings"]:
-        if f["kind"] == "insufficient":
-            out.append({"text": "확인 불가: 질문에 직접 답할 수 있는 공식 근거(법령·정책 원문)를 찾지 못했습니다. 담당 기관의 최신 자료를 추가로 확인하세요.",
-                        "status": "unverifiable", "citations": []})
-        elif f["kind"] == "conflict":
-            out.append({"text": f"자료 간 불일치: {f['label']} — {f['ref_title']}에는 {f['ref_value']}, {f['other_title']}에는 {f['other_value']}로 "
-                                f"기재되어 있습니다. 공식 자료를 우선 인용하며 상담 전 다시 확인하세요.",
-                        "status": "conflict", "citations": f["citations"]})
+        cites = [body.add(gate["evidence"][c]) for c in f["citations"]]
+        if f["kind"] == "conflict":
+            body.say(f"일부 자료에는 {josa(f['label'], '이가')} {josa(str(f['other_value']), '으로')} 나와 있으나, "
+                     f"공식 자료인 「{plain_title(f['ref_title'])}」 기준({f['ref_value']})으로 안내드립니다.", cites)
         elif f["kind"] == "not_effective":
-            out.append({"text": f"현재 적용 여부는 확인 불가: {f['title']}의 시행일은 {f['effective_date']}로 기준일 이후입니다. "
-                                f"시행일 이후 담당 기관에 다시 확인하세요.",
-                        "status": "unverifiable", "citations": f["citations"]})
-    return out
+            body.check(f"{f['effective_date']} 시행 이후 적용 여부 다시 확인", cites)
+        elif f["kind"] == "insufficient":
+            body.check("관련 공식 자료를 찾지 못했습니다. 담당 기관에 직접 확인")
 
 
 def verify_citations(claims: list[dict], evidence: dict[str, dict]) -> list[dict]:
-    """주장별 인용 검증: 존재하지 않는 근거 id는 제거하고, 근거 없는 사실 주장은 확인 불가로 낮춘다."""
+    """주장별 인용 검증: 없는 출처 id는 지우고, 출처 없는 사실 주장·기사만 근거인 주장은 확인할 사항으로 돌린다."""
     out = []
     for c in claims:
         cites = [x for x in c.get("citations", []) if x in evidence]
         status = c.get("status", "verified")
-        if status not in ("verified", "warning", "unverifiable", "conflict"):
-            status = "warning"
-        text = str(c["text"]).strip()
-        if status == "verified" and not cites:
-            status, text = "unverifiable", f"확인 불가(근거 미연결): {text}"
-        elif status == "verified" and all(evidence[x]["source_type"] == "news" for x in cites):
-            status = "warning"  # 뉴스만으로는 사실 확정 불가
-        out.append({"text": text, "status": status, "citations": cites})
+        if status == "verified" and (not cites or all(evidence[x]["type"] == "news" for x in cites)):
+            status = "unverifiable"
+        out.append({"text": str(c["text"]).strip(), "status": status, "citations": cites})
     return out
 
 
-def doc_claims(task: str, context: str, hits: list[dict], gate: dict, *, limit: int = 3) -> tuple[list[dict], str]:
-    if llm.is_enabled():
-        usable = [e for e in gate["evidence"].values()]
-        claims = llm.generate_claims(task, context, usable)  # LLMUnavailable은 호출자에게 전파
-        return verify_citations(claims, gate["evidence"])[:6], "anthropic"
-    return template_doc_claims(hits, gate, limit), "template"
+def llm_body(body: Body, task: str, context: str):
+    """LLM이 본문을 다시 쓴다. 출처 검증 후 근거 없는 문장은 확인할 사항으로 보낸다. 실패하면 LLMUnavailable."""
+    claims = verify_citations(llm.generate_claims(task, context, list(body.evidence.values())), body.evidence)
+    body.opinion = []
+    for c in claims[:8]:
+        (body.check if c["status"] == "unverifiable" else body.say)(c["text"], c["citations"])
 
 
-# ---------- /ask ----------
-
-def run_ask(conn, user, consultation: dict, question: str, as_of: date | None) -> int:
-    as_of = as_of or date.today()
-    region = region_of(consultation.get("district"))
-    hits = rag.search(conn, user.tenant_id, question, region=region, as_of=as_of)
-    gate = rag.evidence_gate(hits, as_of=as_of, policy_question=rag.is_policy_question(question))
-    context = f"질문 기준일 {as_of}, 지역 {region or '미지정'}, 고객 조건: {_cond_summary(consultation)}"
-    claims, generator = doc_claims(f"중개사 질문에 답하는 초안: {question}", context, hits, gate)
-    claims = claims + gate_claims(gate)
-    return save_draft(conn, user, consultation["id"], "ask", question, claims, list(gate["evidence"].values()),
-                      gate, [], generator, {})
-
-
-# ---------- /advise ----------
-
-def _cond_summary(c: dict) -> str:
-    """LLM에 보내는 상담 문맥. 고객 이름 등 개인 식별 정보는 넣지 않는다."""
+def cond_summary(c: dict) -> str:
+    """LLM에 보내는 고객 조건. 이름·연락처 등 개인 식별 정보는 넣지 않는다."""
     parts = []
     if c.get("budget_max"):
         parts.append(f"예산 {eok(c['budget_max'])} 이하")
@@ -258,183 +300,140 @@ def _cond_summary(c: dict) -> str:
     if c.get("station_walk_max"):
         parts.append(f"역 도보 {c['station_walk_max']}분 이내")
     if c.get("preferences"):
-        parts.append("선호: " + ", ".join(c["preferences"]))
+        parts.append("원하는 점: " + ", ".join(c["preferences"]))
+    if c.get("first_home"):
+        parts.append("생애최초 구입")
     return " · ".join(parts) or "조건 없음"
 
 
-def _listing_evidence(l: dict) -> dict:
-    snippet = (f"가격 {eok(l['price'])} · 전용 {l['area_m2']:g}㎡ · {l['station']} 도보 {l['station_walk_min']}분 · "
-               f"공원 도보 {l['park_walk_min']}분 · 주소 {l['address']}")
-    if len(l["price_history"]) > 1:
-        snippet += " · 가격 이력 " + " → ".join(f"{eok(h['price'])}({h['changed_at']})" for h in l["price_history"])
-    return {"chunk_id": f"l{l['id']}", "document_id": None, "title": f"후보 {l['label']} · {l['title']}",
-            "publisher": l["source"], "source_type": "listing", "type_label": "매물 데이터", "authority": 0,
-            "date": l["source_date"], "effective_date": None, "location": f"매물 #{l['id']}", "snippet": snippet,
-            "url": None, "score": None, "state": "verified", "badge": "매물 데이터"}
+# ---------- 비교표 ----------
 
-
-def _trade_evidence(l: dict, ref: dict) -> dict:
-    return {"chunk_id": f"t{l['id']}", "document_id": None, "title": f"{l['complex_name']} 실거래가",
-            "publisher": ref["source"], "source_type": "trade", "type_label": "실거래가", "authority": 0,
-            "date": ref["as_of"], "effective_date": None, "location": f"{ref['period']} · {ref['count']}건",
-            "snippet": f"동일 단지·유사 면적 최근 12개월 실거래 {ref['count']}건, 중위 {eok(ref['median_price'])} ({ref['period']}). "
-                       "과거 신고 거래이며 현재 판매 매물·호가·거래 가능 상태가 아닙니다.",
-            "url": "https://www.data.go.kr/data/15126468/openapi.do", "score": None, "state": "verified", "badge": "실거래가"}
-
-
-def pick_candidates(conn, user, consultation: dict, listing_ids: list[int] | None) -> list[dict]:
+def compare_listings(conn, user, customer: dict, listing_ids: list[int] | None) -> list[dict]:
     if listing_ids:
         if not 1 <= len(listing_ids) <= 5:
-            raise DomainError("비교 후보는 1~5개까지 선택할 수 있습니다.")
-        found = fetch_listings(conn, user.tenant_id, ids=listing_ids)
+            raise DomainError("비교할 매물은 1~5개까지 고를 수 있습니다.")
+        found = fetch_listings(conn, user.tenant_id, ids=listing_ids, user_id=user.id)
         if len(found) != len(set(listing_ids)):
-            raise DomainError("선택한 매물 중 이 사무소에서 조회할 수 없는 항목이 있습니다.", 404)
-        return found
-    excluded = {r["listing_id"]: r["status"] for r in conn.execute(
-        "SELECT listing_id, status FROM consultation_candidates WHERE consultation_id = %s", (consultation["id"],))}
-    found = fetch_listings(conn, user.tenant_id, district=consultation.get("district"),
-                           max_price=consultation.get("budget_max"), min_area=consultation.get("area_min"),
-                           max_station_walk=consultation.get("station_walk_max"))
-    rank = {"interest": 0, "compare": 1}
-    found = [l for l in found if excluded.get(l["id"]) != "excluded"]
-    found.sort(key=lambda l: (rank.get(excluded.get(l["id"]), 2), l["price"]))
-    if not found:
-        raise DomainError("상담 조건에 맞는 후보가 없습니다. 조건을 조정하거나 후보를 직접 선택하세요.")
-    return found[:3]
+            raise DomainError("고른 매물 중 이 사무소에서 볼 수 없는 매물이 있습니다.", 404)
+        order = {lid: i for i, lid in enumerate(listing_ids)}
+        return sorted(found, key=lambda l: order[l["id"]])
+    rows = conn.execute(
+        f"""SELECT d.listing_id FROM deals d JOIN listings l ON l.id = d.listing_id
+            WHERE d.customer_id = %s AND d.stage <> 'dropped' AND l.status = 'active'
+            ORDER BY {STAGE_ORDER_SQL} DESC, d.id LIMIT 5""", (customer["id"],)).fetchall()
+    if not rows:
+        raise DomainError("비교할 매물이 없습니다. 지도에서 매물을 먼저 고객과 연결하세요.")
+    return compare_listings(conn, user, customer, [r["listing_id"] for r in rows])
 
 
-def run_advise(conn, user, consultation: dict, listing_ids: list[int] | None) -> int:
+def draft_compare(conn, user, customer: dict, listing_ids: list[int] | None) -> dict:
     as_of = date.today()
-    cond = consultation
-    region = region_of(cond.get("district"))
-    candidates = pick_candidates(conn, user, consultation, listing_ids)
-    prefs = cond.get("preferences") or []
-
-    evidence: dict[str, dict] = {}
-    claims: list[dict] = []
-    checks_by_listing: dict[str, list[dict]] = {}
-    for l in candidates:
-        lid = f"l{l['id']}"
-        evidence[lid] = _listing_evidence(l)
-        checks = condition_checks(l, cond)
-        checks_by_listing[str(l["id"])] = checks
-        met = [c["condition"] for c in checks if c["ok"]]
-        unmet = [c for c in checks if not c["ok"]]
-        claims.append({"text": f"후보 {l['label']}({l['title']})는 {eok(l['price'])} · 전용 {l['area_m2']:g}㎡이며 "
-                               f"{', '.join(met) if met else '확인된'} 조건을 충족합니다.",
-                       "status": "verified", "citations": [lid]})
-        for c in unmet:
-            claims.append({"text": f"후보 {l['label']} 조건 차이 · {c['condition']}: {c['detail']}", "status": "warning", "citations": [lid]})
-        if "공원" in prefs and l.get("park_walk_min") is not None and l["park_walk_min"] <= 10:
-            claims.append({"text": f"후보 {l['label']}는 공원 도보 {l['park_walk_min']}분으로 고객 선호 '공원'과 연결됩니다.",
-                           "status": "verified", "citations": [lid]})
+    region = region_of(customer.get("district"))
+    prefs = customer.get("preferences") or []
+    ls = compare_listings(conn, user, customer, listing_ids)
+    body = Body()
+    snapshot = []
+    # 1) 매물별 사실 (매물 정보·실거래가·학구도 메모)
+    for l in ls:
+        lid = body.add(listing_evidence(l))
+        checks = condition_checks(l, customer)
+        ref = trade_reference(conn, l)
+        snapshot.append({**l, "checks": checks, "trade_reference": ref})
+        unmet = [c["condition"] for c in checks if not c["ok"]]
+        fit = "찾으시는 조건에 맞습니다." if not unmet else f"{'·'.join(unmet)} 조건과는 차이가 있습니다."
+        body.say(f"{l['label']} {l['title']}는 {eok(l['price'])}, 전용 {l['area_m2']:g}㎡로 {fit}", [lid])
+        body.say(f"{l['station']}까지 걸어서 {l['station_walk_min']}분입니다.", [lid])
+        if "공원" in prefs and l.get("park_walk_min") is not None:
+            body.say(f"공원까지 도보 {l['park_walk_min']}분{'으로 가깝습니다' if l['park_walk_min'] <= 5 else '입니다'}.", [lid])
         if len(l["price_history"]) > 1:
             first, last = l["price_history"][0], l["price_history"][-1]
-            claims.append({"text": f"후보 {l['label']} 가격 변경: {eok(first['price'])} → {eok(last['price'])} ({last['changed_at']} 변경).",
-                           "status": "verified", "citations": [lid]})
-        ref = trade_reference(conn, l)
+            body.say(f"가격이 {eok(first['price'])}에서 {josa(eok(last['price']), '으로')} 조정되었습니다"
+                     f"({last['changed_at'][5:].replace('-', '/')}).", [lid])
         if ref:
-            tid = f"t{l['id']}"
-            evidence[tid] = _trade_evidence(l, ref)
-            claims.append({"text": f"후보 {l['label']} 단지의 최근 실거래 중위가는 {eok(ref['median_price'])}({ref['count']}건)입니다. "
-                                   "과거 신고 거래이며 현재 호가가 아닙니다.", "status": "verified", "citations": [tid]})
+            tid = body.add(trade_evidence(l, ref))
+            body.say(f"같은 단지 비슷한 면적의 최근 실거래 중위가는 {eok(ref['median_price'])}({ref['count']}건)입니다.", [tid])
         if any(p in prefs for p in ("통학", "학군")):
-            school_hits = [h for h in rag.search(conn, user.tenant_id, f"{l['complex_name']} 배정 학교 통학 학군", region=region, as_of=as_of)
-                           if l["complex_name"] in h["text"]]
-            if school_hits:
-                h = school_hits[0]
-                evidence[f"c{h['id']}"] = rag.to_evidence(h)
-                sentence = next((s for s in re.split(r"(?<=[.다])\s+", h["text"]) if l["complex_name"] in s), _lead(h["text"]))
-                claims.append({"text": f"후보 {l['label']} 통학: {sentence.strip()}", "status": "verified", "citations": [f"c{h['id']}"]})
+            hits = [h for h in rag.search(conn, user.tenant_id, f"{l['complex_name']} 배정 학교 학구도", region=region, as_of=as_of)
+                    if l["complex_name"] in h["text"]]
+            sent = sentence_with(hits[0]["text"], l["complex_name"]) if hits else None
+            if sent:
+                body.say(sent if sent.endswith(".") else sent + ".", [body.add(rag.to_evidence(hits[0]))])
             else:
-                claims.append({"text": f"확인 불가: 후보 {l['label']}의 학군 배정 — 현재 검색된 자료만으로는 배정 학교를 확정할 수 없습니다. "
-                                       "관할 교육지원청의 최신 자료를 추가로 확인하세요.", "status": "unverifiable", "citations": []})
+                body.check(f"{l['label']} {l['title']}의 배정 학교 (교육지원청 학구도)")
 
-    unstructured = [p for p in prefs if p not in ("공원", "통학", "학군", "역세권")]
-    for p in unstructured:
-        claims.append({"text": f"현장 확인 필요: '{p}' 선호는 보유한 구조화 데이터로 확인할 수 없습니다.", "status": "unverifiable", "citations": []})
-
-    # 후보 확정 후 지역 정책·확인 절차 문서 검색 (RAG는 추천 점수를 만들지 않고 이유·확인 사항만 쓴다)
-    query = f"{region or ''} 아파트 매수 상담 확인 절차 주택 구입 지원 정책"
-    hits = rag.search(conn, user.tenant_id, query, region=region, as_of=as_of, k=5)
-    gate = rag.evidence_gate(hits, as_of=as_of, policy_question=False)
-    for cid, ev in gate["evidence"].items():
-        evidence[cid] = ev
-    context = f"고객 조건: {_cond_summary(cond)}. 후보: " + "; ".join(
-        f"{l['label']} {l['title']} {eok(l['price'])} {l['area_m2']:g}㎡" for l in candidates)
+    generator = "template"
     if llm.is_enabled():
-        extra = llm.generate_claims("후보별 추천 이유와 상담 전 확인 사항을 정리한 초안", context, list(evidence.values()))
-        claims += verify_citations(extra, evidence)[:6]
+        context = f"고객 조건: {cond_summary(customer)}. 매물: " + "; ".join(
+            f"{l['label']} {l['title']} {eok(l['price'])} {l['area_m2']:g}㎡" for l in ls)
+        llm_body(body, "고객에게 보낼 매물 비교 의견 (중개사 1인칭, 존댓말, 사실마다 출처 id)", context)
+        generator = "anthropic"
+
+    # 2) 정책·절차 (문서 근거 검색 + 근거 게이트, 결정론적으로 덧붙임)
+    gate_status, gate_messages = "ok", []
+    if customer.get("first_home"):
+        hits = rag.search(conn, user.tenant_id, "생애최초 주택 구입 지원 대상 주택가격 시행일", region=region, as_of=as_of, k=6)
+        gate = rag.evidence_gate(hits, as_of=as_of, policy_question=True)
+        gate_status, gate_messages = gate["status"], gate["messages"]
+        policy = [h for h in hits if h["source_type"] == "policy" and "주택가격" in h["text"]]
+        if policy:
+            ok = [l["label"] for l in ls if l["price"] <= FIRST_HOME_PRICE_LIMIT]
+            if ok:
+                subject = "비교한 매물은 모두" if len(ok) == len(ls) else "·".join(ok) + "는"
+                body.say(f"{subject} 주택가격 9억 원 이하라 생애최초 구입 지원의 가격 기준에는 해당합니다.",
+                         [body.add(gate["evidence"][f"c{policy[0]['id']}"])])
+            apply_gate(body, gate)
+        else:
+            body.check("생애최초 구입 지원 대상 여부 (취급 은행 확인)")
+
+    proc = [h for h in rag.search(conn, user.tenant_id, "계약 전 등기사항증명서 건축물대장 확인", region=region, as_of=as_of, k=4)
+            if "등기사항증명서" in h["text"]]
+    body.check("계약 전 등기사항증명서·건축물대장 확인", [body.add(rag.to_evidence(proc[0]))] if proc else [])
+    for p in prefs:
+        if p not in ("공원", "통학", "학군", "역세권"):
+            body.check(f"{josa(chr(39) + p + chr(39), '은는')} 방문해서 확인")
+    return {**body.result(), "listings": snapshot, "gate": {"status": gate_status, "messages": gate_messages},
+            "generator": generator, "title": "매물 비교표"}
+
+
+# ---------- 문의 답변 ----------
+
+def get_chunk(conn, tenant_id: int, chunk_id: str) -> dict | None:
+    raw = chunk_id[1:] if chunk_id.startswith("c") else chunk_id
+    if not raw.isdigit():
+        return None
+    return conn.execute(
+        """SELECT c.id, c.document_id, c.location, c.text, d.title, d.publisher, d.source_type, d.published_at,
+                  d.effective_date, d.region, d.url, d.facts, 1.0::float AS score
+           FROM chunks c JOIN documents d ON d.id = c.document_id
+           WHERE c.id = %s AND (c.tenant_id IS NULL OR c.tenant_id = %s)""",
+        (int(raw), tenant_id)).fetchone()
+
+
+def draft_answer(conn, user, customer: dict, question: str, quote_id: str | None) -> dict:
+    as_of = date.today()
+    region = region_of(customer.get("district"))
+    hits = rag.search(conn, user.tenant_id, question, region=region, as_of=as_of)
+    quoted = None
+    if quote_id:
+        quoted = get_chunk(conn, user.tenant_id, quote_id)
+        if not quoted:
+            raise DomainError("인용할 자료를 찾을 수 없습니다.", 404)
+        hits = [quoted] + [h for h in hits if h["id"] != quoted["id"]]
+    gate = rag.evidence_gate(hits, as_of=as_of, policy_question=rag.is_policy_question(question))
+    body = Body()
+    generator = "template"
+    if llm.is_enabled():
+        for ev in gate["evidence"].values():
+            body.add(ev)
+        llm_body(body, f"고객 문의에 대한 답변 (중개사 1인칭, 존댓말, 사실마다 출처 id): {question}",
+                 f"기준일 {as_of}, 지역 {region or '미지정'}, 고객 조건: {cond_summary(customer)}")
         generator = "anthropic"
     else:
-        claims += template_doc_claims(hits, gate, limit=2)
-        generator = "template"
-    claims += gate_claims(gate)
-
-    merged_gate = {"status": gate["status"], "messages": gate["messages"]}
-    if any(c["status"] == "unverifiable" for c in claims) and merged_gate["status"] == "ok":
-        merged_gate["messages"] = merged_gate["messages"] + ["일부 항목은 근거가 부족해 확인 불가로 표시했습니다."]
-    return save_draft(conn, user, consultation["id"], "advise", None, claims, list(evidence.values()),
-                      merged_gate, candidates, generator, checks_by_listing)
-
-
-# ---------- 초안 저장·조회 ----------
-
-def claims_to_text(claims: list[dict]) -> str:
-    return "\n".join(f"- {c['text']}" for c in claims)
-
-
-def save_draft(conn, user, consultation_id: int, mode: str, question: str | None, claims: list[dict],
-               evidence: list[dict], gate: dict, candidates: list[dict], generator: str,
-               checks_by_listing: dict) -> int:
-    gate_payload = {"status": gate["status"], "messages": gate["messages"], "checks_by_listing": checks_by_listing}
-    row = conn.execute(
-        """INSERT INTO drafts (tenant_id, consultation_id, mode, question, claims, evidence, gate, candidates, generator, created_by)
-           VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING id""",
-        (user.tenant_id, consultation_id, mode, question, Jsonb(claims), Jsonb(evidence), Jsonb(gate_payload),
-         Jsonb(candidates), generator, user.id),
-    ).fetchone()
-    conn.execute(
-        "INSERT INTO draft_versions (draft_id, version, text, note, created_by) VALUES (%s, 1, %s, %s, %s)",
-        (row["id"], claims_to_text(claims), f"AI 초안 생성 ({'LLM' if generator == 'anthropic' else '규칙 기반'})", user.id),
-    )
-    conn.execute("INSERT INTO consultation_logs (consultation_id, note) VALUES (%s, %s)",
-                 (consultation_id, f"/{mode} 초안 #{row['id']} 생성"))
-    record(conn, tenant_id=user.tenant_id, user_id=user.id, event="draft.created", entity="draft", entity_id=row["id"],
-           payload={"mode": mode, "generator": generator, "gate": gate["status"],
-                    "evidence": [e["chunk_id"] for e in evidence],
-                    "claims": {s: sum(1 for c in claims if c["status"] == s) for s in ("verified", "warning", "conflict", "unverifiable")}})
-    return row["id"]
-
-
-def version_label(state: str, version: int) -> str:
-    return "v1.0" if state == "approved" else f"v0.{version}"
-
-
-def load_draft(conn, tenant_id: int, draft_id: int) -> dict[str, Any] | None:
-    d = conn.execute(
-        """SELECT d.*, a.name AS approved_by_name FROM drafts d LEFT JOIN users a ON a.id = d.approved_by
-           WHERE d.id = %s AND d.tenant_id = %s""",
-        (draft_id, tenant_id),
-    ).fetchone()
-    if not d:
-        return None
-    versions = conn.execute(
-        """SELECT v.version, v.text, v.note, v.created_at, u.name AS by FROM draft_versions v
-           LEFT JOIN users u ON u.id = v.created_by WHERE v.draft_id = %s ORDER BY v.version DESC""",
-        (draft_id,),
-    ).fetchall()
-    history = [{"version_label": f"v0.{v['version']}", "note": v["note"], "at": v["created_at"].isoformat(), "by": v["by"]}
-               for v in versions]
-    if d["state"] == "approved":
-        history.insert(0, {"version_label": "v1.0", "note": "최종 승인", "at": d["approved_at"].isoformat(), "by": d["approved_by_name"]})
-    gate = dict(d["gate"])
-    checks = gate.pop("checks_by_listing", {})
-    return {
-        "id": d["id"], "mode": d["mode"], "consultation_id": d["consultation_id"], "question": d["question"],
-        "state": d["state"], "version": d["version"], "version_label": version_label(d["state"], d["version"]),
-        "text": versions[0]["text"], "claims": d["claims"], "evidence": d["evidence"], "gate": gate,
-        "checks_by_listing": checks, "generator": d["generator"], "candidates": d["candidates"],
-        "approved_by": d["approved_by_name"], "approved_at": d["approved_at"].isoformat() if d["approved_at"] else None,
-        "created_at": d["created_at"].isoformat(), "history": history,
-    }
+        ordered = sorted(hits, key=lambda h: (quoted is None or h["id"] != quoted["id"],
+                                              rag.AUTHORITY[h["source_type"]], -h["score"]))
+        for h in [h for h in ordered if h["source_type"] != "news"
+                  and gate["evidence"][f"c{h['id']}"]["state"] != "conflict"][:2]:
+            body.say(_lead(h["text"]), [body.add(gate["evidence"][f"c{h['id']}"])])
+    apply_gate(body, gate)
+    return {**body.result(), "listings": [], "gate": {"status": gate["status"], "messages": gate["messages"]},
+            "generator": generator, "title": "문의 답변"}

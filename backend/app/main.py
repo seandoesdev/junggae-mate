@@ -8,7 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Response
 
 from . import db
-from .api import router
+from .api import public, router
 from .audit import request_id_var
 from .config import settings
 from .seed import seed
@@ -70,6 +70,7 @@ async def http_error(request: Request, exc: HTTPException):
 
 
 app.include_router(router)
+app.include_router(public)  # 고객용 공개 링크 /r/{token}
 
 # 정적 화면: 허용된 파일만 제공 (저장소의 다른 파일 노출 방지)
 _STATIC_SUFFIXES = {".html", ".css", ".js", ".png", ".svg", ".ico"}

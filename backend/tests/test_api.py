@@ -1,7 +1,5 @@
-"""API 통합 테스트. 컨테이너 안에서 실제 PostgreSQL(pgvector)에 대해 실행한다.
-
-    docker compose run --rm app pytest -q
-"""
+"""API 통합 테스트 (실제 PostgreSQL + pgvector, 테스트 전용 DB). 실행: docker compose run --rm app python -m pytest -q"""
+import re
 from datetime import date
 
 import pytest
@@ -9,6 +7,7 @@ from fastapi.testclient import TestClient
 
 from app import llm, rag
 from app.chunking import chunk_document
+from app.db import tx
 from app.main import app
 
 
@@ -25,8 +24,18 @@ def _login(client, email):
 
 
 @pytest.fixture(scope="session")
-def agent(client):
+def kim(client):
     return _login(client, "agent@hanul.test")
+
+
+@pytest.fixture(scope="session")
+def park(client):
+    return _login(client, "park@hanul.test")
+
+
+@pytest.fixture(scope="session")
+def lee(client):
+    return _login(client, "lee@hanul.test")
 
 
 @pytest.fixture(scope="session")
@@ -40,202 +49,258 @@ def other(client):
 
 
 @pytest.fixture(scope="session")
-def consultation_id(client, agent):
-    items = client.get("/api/consultations", headers=agent).json()
-    return next(c["id"] for c in items if c["customer_name"] == "김하늘")
+def L(client, kim):
+    """라벨 → 매물 id"""
+    return {l["label"]: l["id"] for l in client.get("/api/listings", headers=kim).json()["items"]}
 
 
 @pytest.fixture(scope="session")
-def labels(client, agent):
-    items = client.get("/api/listings", headers=agent).json()["items"]
-    return {l["label"]: l["id"] for l in items}
+def C(client, kim):
+    """고객 이름 → id"""
+    return {c["name"]: c["id"] for c in client.get("/api/customers", headers=kim).json()}
 
 
-# ---------- 인증·tenant 격리 ----------
-
-def test_health(client):
-    body = client.get("/api/health").json()
-    assert body["db"] == "ok" and body["vector"] == "ok"
+def _deal(client, h, listing_id, customer_name):
+    return next(d for d in client.get(f"/api/listings/{listing_id}", headers=h).json()["deals"] if d["customer_name"] == customer_name)
 
 
-def test_login_rejects_bad_password(client):
+def _tokens(text):
+    return re.findall(r"\[([clt]\d+)\]", text)
+
+
+# ---------- 인증·격리 ----------
+
+def test_health_and_auth(client):
+    assert client.get("/api/health").json()["vector"] == "ok"
     assert client.post("/api/auth/login", json={"email": "agent@hanul.test", "password": "x"}).status_code == 401
+    r = client.get("/api/listings")
+    assert r.status_code == 401 and r.headers.get("X-Request-ID")
 
 
-def test_requires_token(client):
-    r = client.get("/api/consultations")
-    assert r.status_code == 401
-    assert r.headers.get("X-Request-ID")
+def test_tenant_isolation(client, other, L, C):
+    assert client.get(f"/api/listings/{L['A']}", headers=other).status_code == 404
+    assert client.get(f"/api/customers/{C['김하늘']}", headers=other).status_code == 404
+    assert client.post(f"/api/customers/{C['김하늘']}/reports", headers=other, json={"kind": "compare"}).status_code == 404
+    assert all(c["name"] != "김하늘" for c in client.get("/api/customers", headers=other).json())
 
 
-def test_other_tenant_cannot_read_consultation_or_listing(client, other, consultation_id, labels):
-    assert client.get(f"/api/consultations/{consultation_id}", headers=other).status_code == 404
-    other_labels = {l["id"] for l in client.get("/api/listings", headers=other).json()["items"]}
-    assert labels["A"] not in other_labels
-    r = client.post("/api/advise", headers=other, json={"consultation_id": consultation_id})
-    assert r.status_code == 404
-
-
-def test_rag_respects_tenant_acl(client, agent, other):
-    mine = client.get("/api/evidence/search", params={"q": "내부 수수료 기준"}, headers=agent).json()["items"]
+def test_library_respects_acl(client, kim, other):
+    mine = client.get("/api/evidence/search", params={"q": "내부 수수료 기준"}, headers=kim).json()["items"]
     assert all("연희" not in e["title"] for e in mine)
     theirs = client.get("/api/evidence/search", params={"q": "내부 수수료 기준"}, headers=other).json()["items"]
     assert any("연희" in e["title"] for e in theirs)
 
 
-# ---------- 구조화 사실 ----------
+# ---------- 매물·지도 ----------
 
-def test_listing_filter_and_compare(client, agent, consultation_id, labels):
-    r = client.get("/api/listings", headers=agent, params={"district": "마포구", "max_price": 80000, "min_area": 59,
-                                                           "max_station_walk": 10})
-    got = {l["label"] for l in r.json()["items"]}
-    assert got == {"A", "B", "C", "G"}
-    r = client.post("/api/compare", headers=agent, json={"consultation_id": consultation_id,
-                                                         "listing_ids": [labels["A"], labels["D"]]})
-    rows = r.json()["rows"]
-    assert all(c["ok"] for c in rows[0]["checks"])
-    assert any(c["condition"] == "예산" and not c["ok"] for c in rows[1]["checks"])
-    assert rows[0]["trade_reference"]["count"] == 4
+def test_listing_stage_and_scope(client, kim, park):
+    items = {l["label"]: l for l in client.get("/api/listings", headers=kim).json()["items"]}
+    assert len(items) == 12
+    assert (items["A"]["stage"], items["A"]["active_deals"]) == ("nego", 2)
+    assert items["G"]["stage"] == "contract" and items["L"]["stage"] == "done" and items["E"]["stage"] == "available"
+    assert items["A"]["agent_name"] == "김선용" and items["A"]["mine"] and not items["D"]["mine"]
+    mine = {l["label"] for l in client.get("/api/listings", params={"mine": "true"}, headers=kim).json()["items"]}
+    assert mine == {"A", "B", "C", "E", "G", "J"}
+    assert {l["label"] for l in client.get("/api/listings", params={"mine": "true"}, headers=park).json()["items"]} == {"D", "F", "K"}
 
 
-def test_listing_register_detail_update_close(client, agent, admin, other, consultation_id, labels):
-    body = {"title": "망원 한강 59", "complex_name": "망원한강", "address": "서울 마포구 망원로 1", "district": "마포구",
-            "price": 79000, "area_m2": 59.5, "lat": 37.556, "lng": 126.905, "floor": "7층", "station": "망원역",
-            "station_walk_min": 6, "park_walk_min": 4, "description": "남향"}
-    assert client.post("/api/listings", headers=agent, json={**body, "lat": 10}).status_code == 422  # 국내 좌표 아님
-    r = client.post("/api/listings", headers=agent, json=body)
+def test_listing_checks_use_documents(client, kim, L):
+    a = client.get(f"/api/listings/{L['A']}", headers=kim).json()
+    checks = {c["key"]: c for c in a["checks"]}
+    assert len(a["deals"]) == 2 and a["trade_reference"]["count"] == 4
+    assert checks["registry"]["sources"] and any(s["type"] == "law" for s in checks["registry"]["sources"])
+    assert "마포초" in checks["school"]["text"] and checks["school"]["sources"][0]["type"] == "office"
+    assert checks["first_home_conflict"]["level"] == "warn"
+    assert {s["type"] for s in checks["first_home_conflict"]["sources"]} == {"policy", "news"}
+    assert "report" not in checks  # 협의 단계에서는 거래 신고 항목 없음
+
+    g = {c["key"]: c for c in client.get(f"/api/listings/{L['G']}", headers=kim).json()["checks"]}
+    assert g["report"]["level"] == "urgent" and "30일" in g["report"]["sources"][0]["snippet"]
+    c = {c["key"]: c for c in client.get(f"/api/listings/{L['C']}", headers=kim).json()["checks"]}
+    assert c["school"]["level"] == "warn" and c["school"]["sources"] == []
+    d = {c["key"]: c for c in client.get(f"/api/listings/{L['D']}", headers=kim).json()["checks"]}
+    assert "초과" in d["first_home"]["text"] and "first_home_conflict" not in d
+
+    r = client.put(f"/api/listings/{L['A']}/checks/registry", headers=kim, json={"checked": True})
+    assert r.json()["checked"] and r.json()["checked_by"] == "김선용"
+    assert client.put(f"/api/listings/{L['A']}/checks/nope", headers=kim, json={"checked": True}).status_code == 404
+
+
+def test_listing_register_edit_close_permissions(client, kim, park, admin):
+    body = {"title": "망원한강 59", "complex_name": "망원한강", "address": "서울 마포구 망원로 1", "district": "마포구",
+            "price": 79000, "area_m2": 59.5, "lat": 37.556, "lng": 126.905, "station": "망원역", "station_walk_min": 6}
+    assert client.post("/api/listings", headers=kim, json={**body, "lat": 10}).status_code == 422
+    new = client.post("/api/listings", headers=kim, json=body).json()
+    assert new["mine"] and new["stage"] == "available" and new["label"] == "M"
+    assert client.put(f"/api/listings/{new['id']}", headers=park, json=body).status_code == 403
+    upd = client.put(f"/api/listings/{new['id']}", headers=admin, json={**body, "price": 77000}).json()
+    assert [h["price"] for h in upd["price_history"]] == [79000, 77000]
+    assert client.post(f"/api/listings/{new['id']}/close", headers=kim).json()["status"] == "closed"
+    assert client.get(f"/api/listings/{new['id']}", headers=kim).status_code == 404
+
+
+# ---------- 고객 ----------
+
+def test_customers(client, kim, park, C):
+    assert len(client.get("/api/customers", headers=kim).json()) == 7
+    assert {c["name"] for c in client.get("/api/customers", params={"mine": "true"}, headers=park).json()} == {"최유나", "오지훈"}
+    d = client.get(f"/api/customers/{C['김하늘']}", headers=kim).json()
+    assert d["customer"]["top_stage"] == "nego" and d["customer"]["first_home"]
+    assert {x["listing"]["label"] for x in d["deals"]} == {"A", "B", "E"}
+    assert d["activities"]
+    m = {l["label"] for l in client.get(f"/api/customers/{C['김하늘']}/matches", headers=kim).json()["items"]}
+    assert m == {"A", "B", "C", "G", "H"}  # 거래 완료(L)·조건 밖 매물 제외, 동료 매물(H) 포함
+
+    new = client.post("/api/customers", headers=kim, json={"name": "테스트고객", "budget_max": 30000, "area_min": 59,
+                                                           "district": "마포구", "preferences": [" 공원 ", ""]}).json()
+    assert new["agent_name"] == "김선용" and new["preferences"] == ["공원"]
+    r = client.put(f"/api/customers/{new['id']}", headers=kim, json={"name": "테스트고객", "budget_max": 30000, "area_min": 59,
+                                                                      "district": "마포구"}).json()
+    assert any("만족하는 매물이 없습니다" in w for w in r["warnings"])
+    assert client.post(f"/api/customers/{new['id']}/activities", headers=kim, json={"text": "전화 상담"}).status_code == 201
+
+
+# ---------- 거래 ----------
+
+def test_deal_flow_and_permissions(client, kim, lee, C, L):
+    d = client.post("/api/deals", headers=kim, json={"listing_id": L["C"], "customer_id": C["윤채원"]})
+    assert d.status_code == 201 and d.json()["stage"] == "intro" and d.json()["agent_name"] == "김선용"
+    assert client.post("/api/deals", headers=kim, json={"listing_id": L["C"], "customer_id": C["윤채원"]}).status_code == 409
+
+    deal = _deal(client, kim, L["A"], "김하늘")
+    assert client.post(f"/api/deals/{deal['id']}/stage", headers=lee, json={"stage": "contract"}).status_code == 403
+    assert client.post(f"/api/deals/{deal['id']}/stage", headers=kim, json={"stage": "dropped"}).status_code == 422
+    r = client.post(f"/api/deals/{deal['id']}/stage", headers=kim, json={"stage": "contract"}).json()
+    assert r["deal"]["stage"] == "contract" and r["deal"]["days_in_stage"] == 0
+    assert r["warnings"] and "1건" in r["warnings"][0]  # 같은 매물의 박서준 거래는 자동 무산하지 않음
+    a = client.get(f"/api/listings/{L['A']}", headers=kim).json()
+    assert a["listing"]["stage"] == "contract" and any(c["key"] == "report" for c in a["checks"])
+    acts = client.get(f"/api/customers/{C['김하늘']}", headers=kim).json()["activities"]
+    assert "협의→계약" in acts[0]["text"]
+    assert any(x["stage"] == "contract" for x in client.get("/api/deals", params={"mine": "true"}, headers=kim).json())
+
+
+# ---------- 고객 자료 ----------
+
+def test_compare_report_lifecycle(client, kim, park, C):
+    r = client.post(f"/api/customers/{C['김하늘']}/reports", headers=kim, json={"kind": "compare"})
     assert r.status_code == 201, r.text
-    created = r.json()
-    assert created["mine"] and created["registered_by_name"] == "김선용" and created["source"] == "중개사 직접 등록"
-    assert created["label"] and len(created["price_history"]) == 1
+    rep = r.json()
+    assert rep["state"] == "draft" and rep["version"] == "0.1" and rep["title"] == "매물 비교표"
+    assert {l["label"] for l in rep["listings"]} == {"A", "B"}  # 무산된 E 제외
+    ids = {s["id"] for s in rep["sources"]}
+    used = set(_tokens(rep["opinion"] + " ".join(rep["to_check"])))
+    assert used and used <= ids  # 본문의 모든 출처 표시는 실제 출처에 연결
+    assert {i[0] for i in ids} >= {"l", "t", "c"}
+    assert "마포초" in rep["opinion"] and "생애최초" in rep["opinion"]
+    assert "AI" not in rep["opinion"] and "확인 불가" not in rep["opinion"]
+    assert any("시행 이후" in t for t in rep["to_check"]) and any("방문해서 확인" in t for t in rep["to_check"])
 
-    mine = {l["id"] for l in client.get("/api/listings", headers=agent, params={"mine": "true"}).json()["items"]}
-    admin_mine = {l["id"] for l in client.get("/api/listings", headers=admin, params={"mine": "true"}).json()["items"]}
-    assert created["id"] in mine and created["id"] not in admin_mine and labels["D"] in admin_mine
+    rid = rep["id"]
+    assert client.get(f"/api/reports/{rid}/export", headers=kim).status_code == 409
+    edited = client.put(f"/api/reports/{rid}", headers=kim, json={"opinion": rep["opinion"] + " 주말 방문을 권해 드립니다."}).json()
+    assert edited["version"] == "0.2" and edited["opinion"].endswith("권해 드립니다.")
+    assert client.post(f"/api/reports/{rid}/approve", headers=kim, json={"confirm": True}).status_code == 409
+    assert client.post(f"/api/reports/{rid}/review", headers=kim).json()["state"] == "review"
+    assert client.post(f"/api/reports/{rid}/approve", headers=park, json={"confirm": True}).status_code == 403
+    ok = client.post(f"/api/reports/{rid}/approve", headers=kim, json={"confirm": True}).json()
+    assert ok["state"] == "approved" and ok["version"] == "1.0" and ok["approved_by"] == "김선용"
+    assert client.put(f"/api/reports/{rid}", headers=kim, json={"opinion": "변경"}).status_code == 409
 
-    detail = client.get(f"/api/listings/{labels['A']}", headers=agent).json()
-    assert detail["trade_reference"]["count"] == 4
-    assert any(c["consultation_id"] == consultation_id and c["status"] == "interest" for c in detail["candidates"])
+    html = client.get(f"/api/reports/{rid}/export", headers=kim)
+    assert html.status_code == 200 and "<sup>1)</sup>" in html.text and "주말 방문" in html.text
 
-    updated = client.put(f"/api/listings/{created['id']}", headers=agent, json={**body, "price": 77000}).json()
-    assert updated["price"] == 77000 and [h["price"] for h in updated["price_history"]] == [79000, 77000]
-
-    for method, path in [("get", ""), ("post", "/close")]:
-        assert getattr(client, method)(f"/api/listings/{created['id']}{path}", headers=other).status_code == 404
-    assert client.put(f"/api/listings/{created['id']}", headers=other, json=body).status_code == 404
-
-    assert client.post(f"/api/listings/{created['id']}/close", headers=agent).json()["status"] == "closed"
-    ids = {l["id"] for l in client.get("/api/listings", headers=agent).json()["items"]}
-    assert created["id"] not in ids
-    assert client.get(f"/api/listings/{created['id']}", headers=agent).status_code == 404
-
-
-def test_conditions_warnings(client, agent, consultation_id):
-    r = client.put(f"/api/consultations/{consultation_id}/conditions", headers=agent,
-                   json={"budget_max": 30000, "area_min": 59, "district": "마포구", "station_walk_max": 10,
-                         "preferences": ["통학", "공원", "조용한 주거지"]})
-    assert any("만족하는 매물이 없습니다" in w for w in r.json()["warnings"])
-    r = client.put(f"/api/consultations/{consultation_id}/conditions", headers=agent,
-                   json={"budget_max": 80000, "area_min": 59, "district": "마포구", "station_walk_max": 10,
-                         "preferences": ["통학", "공원", "조용한 주거지"]})
-    assert r.json()["warnings"] == []
-
-
-# ---------- 근거 게이트 ----------
-
-def test_ask_detects_conflict_and_not_effective(client, agent, consultation_id):
-    r = client.post("/api/ask", headers=agent, json={"consultation_id": consultation_id,
-                                                     "question": "마포구 생애최초 주택 구입 지원 시행일과 적용 여부",
-                                                     "as_of": "2026-10-29"})
-    assert r.status_code == 200, r.text
-    d = r.json()
-    assert d["gate"]["status"] == "conflict"
-    statuses = {c["status"] for c in d["claims"]}
-    assert {"conflict", "unverifiable"} <= statuses
-    assert sum("현재 적용 여부는 확인 불가" in c["text"] for c in d["claims"]) == 1  # 같은 시행일은 하나로 묶음
-    ev = {e["chunk_id"]: e for e in d["evidence"]}
-    assert any(e["source_type"] == "news" and e["state"] == "conflict" for e in ev.values())
-    assert all("부산" not in e["title"] for e in ev.values())  # 지역 필터
-    for c in d["claims"]:
-        assert all(x in ev for x in c["citations"])  # 모든 인용은 실제 근거에 연결
+    shared = client.post(f"/api/reports/{rid}/share", headers=kim).json()
+    assert shared["state"] == "shared" and shared["share"]["views"] == 0
+    token = shared["share"]["url"].rsplit("/", 1)[1]
+    pub = client.get(f"/r/{token}")
+    assert pub.status_code == 200 and "김하늘 고객님께" in pub.text and "print()" not in pub.text
+    again = client.get(f"/api/reports/{rid}", headers=kim).json()
+    assert again["share"]["views"] == 1
+    assert "링크를 열람" in client.get(f"/api/customers/{C['김하늘']}", headers=kim).json()["activities"][0]["text"]
+    with tx() as conn:
+        conn.execute("UPDATE reports SET share_expires_at = now() - interval '1 minute' WHERE id = %s", (rid,))
+    assert client.get(f"/r/{token}").status_code == 404
+    assert client.get("/r/not-a-token").status_code == 404
 
 
-def test_gate_unit_cases():
+def test_answer_report_and_quote(client, kim, C):
+    r = client.post(f"/api/customers/{C['김하늘']}/reports", headers=kim,
+                    json={"kind": "answer", "question": "마포구 아파트를 사면 생애최초 주택 구입 지원을 받을 수 있나요?"}).json()
+    assert r["kind"] == "answer" and r["gate"]["status"] == "conflict"
+    assert "공식" in r["opinion"] and any("시행 이후" in t for t in r["to_check"])
+    assert any(s["type"] == "news" and s["state"] == "conflict" for s in r["sources"])
+    assert set(_tokens(r["opinion"])) <= {s["id"] for s in r["sources"]}
+
+    hit = client.get("/api/evidence/search", params={"q": "학구도 배정", "type": "office"}, headers=kim).json()["items"][0]
+    q = client.post(f"/api/customers/{C['김하늘']}/reports", headers=kim,
+                    json={"kind": "answer", "question": "배정 학교가 어디인가요?", "quote_id": hit["id"]}).json()
+    assert _tokens(q["opinion"])[0] == hit["id"]
+    assert client.post(f"/api/customers/{C['김하늘']}/reports", headers=kim,
+                       json={"kind": "answer", "question": "x", "quote_id": "c999999"}).status_code == 404
+    assert client.post(f"/api/customers/{C['김하늘']}/reports", headers=kim, json={"kind": "answer"}).status_code == 422
+
+
+def test_compare_needs_linked_listings(client, kim):
+    new = client.post("/api/customers", headers=kim, json={"name": "빈고객"}).json()
+    r = client.post(f"/api/customers/{new['id']}/reports", headers=kim, json={"kind": "compare"})
+    assert r.status_code == 422 and "연결" in r.json()["detail"]
+
+
+# ---------- 자료실 ----------
+
+def test_library(client, kim):
+    docs = client.get("/api/documents", headers=kim).json()
+    assert docs[0]["type"] == "law" and all(d["first_chunk"] for d in docs)
+    assert {d["type"] for d in client.get("/api/documents", params={"type": "news"}, headers=kim).json()} == {"news"}
+    news = client.get("/api/evidence/search", params={"q": "생애최초 시행", "type": "news"}, headers=kim).json()["items"]
+    assert news and all(e["type"] == "news" and e["note"] for e in news)
+    one = client.get(f"/api/evidence/{docs[0]['first_chunk']}", headers=kim).json()
+    assert one["kind"] == "chunk" and one["snippet"]
+
+
+def test_korean_particles():
+    from app.drafting import josa
+    cases = [("시행일", "이가", "시행일이"), ("2026-10-15", "으로", "2026-10-15로"), ("7.5억", "으로", "7.5억으로"),
+             ("'조용한 주거지'", "은는", "'조용한 주거지'는"), ("'공원'", "은는", "'공원'은"), ("서울", "으로", "서울로"),
+             ("2026-10-10", "으로", "2026-10-10으로")]
+    assert [josa(w, p) for w, p, _ in cases] == [e for _, _, e in cases]
+
+
+def test_gate_and_chunking_units():
     assert rag.evidence_gate([], as_of=date(2026, 10, 29), policy_question=True)["status"] == "insufficient"
     news = {"id": 1, "document_id": 1, "source_type": "news", "title": "t", "publisher": "p", "published_at": date(2026, 10, 1),
             "effective_date": None, "location": "x", "text": "y", "url": None, "facts": {}, "score": 0.5}
     g = rag.evidence_gate([news], as_of=date(2026, 10, 29), policy_question=True)
     assert g["status"] == "insufficient" and g["evidence"]["c1"]["state"] == "warning"
+    assert [c.location for c in chunk_document("제3조(신고) 본문 하나.\n제4조(금지) 본문 둘.", "law")] == ["제3조(신고)", "제4조(금지)"]
 
 
-def test_law_chunking_keeps_articles():
-    chunks = chunk_document("제3조(신고) 본문 하나.\n제4조(금지) 본문 둘.", "law")
-    assert [c.location for c in chunks] == ["제3조(신고)", "제4조(금지)"]
+# ---------- 장애 강등·관리 ----------
 
-
-# ---------- /advise + 승인 흐름 ----------
-
-def test_advise_marks_unknown_school_as_unverifiable(client, agent, consultation_id, labels):
-    r = client.post("/api/advise", headers=agent, json={"consultation_id": consultation_id,
-                                                        "listing_ids": [labels["A"], labels["B"], labels["C"]]})
-    assert r.status_code == 200, r.text
-    d = r.json()
-    texts = [c["text"] for c in d["claims"]]
-    assert any("후보 C의 학군" in t and "확인 불가" in t for t in texts)
-    school_b = next(t for t in texts if t.startswith("후보 B 통학"))
-    assert "마포공원앞" in school_b and "마포한강뷰" not in school_b
-    assert any("공원 도보 3분" in t for t in texts)
-    assert d["state"] == "draft" and d["version_label"] == "v0.1"
-
-
-def test_approval_flow(client, agent, consultation_id):
-    d = client.post("/api/advise", headers=agent, json={"consultation_id": consultation_id}).json()
-    did = d["id"]
-    assert client.get(f"/api/drafts/{did}/export", headers=agent).status_code == 409
-    d = client.put(f"/api/drafts/{did}", headers=agent, json={"text": d["text"] + "\n- 고객 요청사항을 재확인했습니다."}).json()
-    assert d["version_label"] == "v0.2"
-    assert client.post(f"/api/drafts/{did}/approve", headers=agent, json={"confirm": True}).status_code == 409
-    assert client.post(f"/api/drafts/{did}/review", headers=agent).json()["state"] == "review"
-    assert client.post(f"/api/drafts/{did}/approve", headers=agent, json={"confirm": False}).status_code == 400
-    d = client.post(f"/api/drafts/{did}/approve", headers=agent, json={"confirm": True}).json()
-    assert d["state"] == "approved" and d["approved_by"] == "김선용" and d["version_label"] == "v1.0"
-    assert client.put(f"/api/drafts/{did}", headers=agent, json={"text": "변경"}).status_code == 409
-    export = client.get(f"/api/drafts/{did}/export", headers=agent)
-    assert export.status_code == 200 and "재확인" in export.text
-
-
-def test_audit_trail(client, admin, agent):
-    events = client.get("/api/audit", headers=admin).json()
-    names = {e["event"] for e in events}
-    assert {"draft.created", "draft.edited", "draft.review_started", "draft.approved"} <= names
-    assert client.get("/api/audit", headers=agent).status_code == 403
-
-
-# ---------- 장애 강등 ----------
-
-def test_llm_outage_only_stops_drafts(client, agent, consultation_id, monkeypatch):
+def test_llm_outage_only_stops_reports(client, kim, C, monkeypatch):
     monkeypatch.setattr(llm, "is_enabled", lambda: True)
 
     def boom(*_a, **_k):
         raise llm.LLMUnavailable("테스트 장애")
 
     monkeypatch.setattr(llm, "generate_claims", boom)
-    r = client.post("/api/ask", headers=agent, json={"consultation_id": consultation_id, "question": "생애최초 지원 대상"})
+    r = client.post(f"/api/customers/{C['김하늘']}/reports", headers=kim, json={"kind": "compare"})
     assert r.status_code == 503
-    assert client.get("/api/listings", headers=agent).status_code == 200
-    assert client.get("/api/evidence/search", params={"q": "생애최초"}, headers=agent).status_code == 200
+    assert client.get("/api/listings", headers=kim).status_code == 200
+    assert client.get("/api/evidence/search", params={"q": "생애최초"}, headers=kim).status_code == 200
 
 
-# ---------- 문서 수집·삭제 전파 ----------
-
-def test_admin_upload_search_delete(client, admin, agent):
-    files = {"file": ("memo.txt", "# 주차 안내\n하늘사무소 시험 문서: 방문 고객 주차는 건물 지하 2층을 이용합니다.".encode(), "text/plain")}
+def test_admin_documents_and_audit(client, admin, kim):
+    files = {"file": ("memo.txt", "# 주차 안내\n방문 고객 주차는 건물 지하 2층을 이용합니다.".encode(), "text/plain")}
     data = {"title": "방문 주차 안내", "source_type": "office", "publisher": "하늘공인중개사사무소", "published_at": "2026-10-01"}
-    assert client.post("/api/admin/documents", headers=agent, files=files, data=data).status_code == 403
-    r = client.post("/api/admin/documents", headers=admin, files=files, data=data)
-    assert r.status_code == 200 and r.json()["job"]["status"] == "done"
-    hits = client.get("/api/evidence/search", params={"q": "방문 고객 주차 지하"}, headers=agent).json()["items"]
+    assert client.post("/api/admin/documents", headers=kim, files=files, data=data).status_code == 403
+    assert client.post("/api/admin/documents", headers=admin, files=files, data=data).json()["job"]["status"] == "done"
+    hits = client.get("/api/evidence/search", params={"q": "방문 고객 주차 지하"}, headers=kim).json()["items"]
     doc = next(e for e in hits if e["title"] == "방문 주차 안내")
     assert client.delete(f"/api/admin/documents/{doc['document_id']}", headers=admin).status_code == 200
-    hits = client.get("/api/evidence/search", params={"q": "방문 고객 주차 지하"}, headers=agent).json()["items"]
+    hits = client.get("/api/evidence/search", params={"q": "방문 고객 주차 지하"}, headers=kim).json()["items"]
     assert all(e["title"] != "방문 주차 안내" for e in hits)
+    events = {e["event"] for e in client.get("/api/audit", headers=admin).json()}
+    assert {"deal.stage_changed", "report.approved", "report.shared", "listing.check"} <= events
+    assert client.get("/api/audit", headers=kim).status_code == 403

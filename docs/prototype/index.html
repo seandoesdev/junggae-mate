@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>중개메이트 · 하늘공인중개사사무소</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+      integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="" />
+    <link rel="stylesheet" href="prototype.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <a class="brand" href="#/map">중개메이트</a>
+      <span class="office">하늘공인중개사사무소</span>
+      <nav class="nav" aria-label="주요 메뉴">
+        <a href="#/map" data-nav="map">지도</a>
+        <a href="#/deals" data-nav="deals">거래</a>
+        <a href="#/customers" data-nav="customers">고객</a>
+        <a href="#/library" data-nav="library">자료실</a>
+      </nav>
+      <span class="proto-note">시안 v0.3 · 예시 데이터 · 저장되지 않음</span>
+      <span class="me">김선용 <span class="muted">공인중개사</span></span>
+    </header>
+
+    <main id="view-map" class="view view-map" hidden>
+      <aside class="side" id="map-side" aria-label="매물 목록과 상세"></aside>
+      <section class="map-wrap" aria-label="매물 지도">
+        <div class="map-bar">
+          <div class="toggle" role="group" aria-label="보기 범위">
+            <button type="button" data-scope="mine" aria-pressed="true">내 매물</button>
+            <button type="button" data-scope="all" aria-pressed="false">사무소 전체</button>
+          </div>
+          <div class="stage-filter" id="stage-filter" role="group" aria-label="거래 단계 필터"></div>
+        </div>
+        <div class="match-bar" id="match-bar" hidden></div>
+        <div id="map" class="map"></div>
+        <p class="map-fail" id="map-fail" hidden>지도를 불러오지 못했습니다. 왼쪽 목록을 이용하세요.</p>
+      </section>
+    </main>
+
+    <main id="view-deals" class="view view-page" hidden>
+      <div class="page-head">
+        <h1>거래</h1>
+        <div class="toggle" role="group" aria-label="보기 범위">
+          <button type="button" data-scope="mine" aria-pressed="true">내 거래</button>
+          <button type="button" data-scope="all" aria-pressed="false">사무소 전체</button>
+        </div>
+      </div>
+      <div class="board" id="board"></div>
+      <p class="dropped" id="dropped"></p>
+    </main>
+
+    <main id="view-customers" class="view view-split" hidden>
+      <aside class="side" id="customer-list" aria-label="고객 목록"></aside>
+      <section class="pane" id="customer-detail"></section>
+    </main>
+
+    <main id="view-library" class="view view-split" hidden>
+      <aside class="side" id="library-side" aria-label="자료 검색"></aside>
+      <section class="pane" id="library-detail"></section>
+    </main>
+
+    <main id="view-report" class="view view-report" hidden></main>
+
+    <aside class="drawer" id="drawer" aria-label="출처" hidden></aside>
+    <dialog id="dialog" class="dialog"></dialog>
+    <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
+
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+      integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+    <script src="prototype.js"></script>
+  </body>
+</html>
