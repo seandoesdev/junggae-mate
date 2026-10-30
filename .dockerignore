@@ -1,0 +1,7 @@
+**/__pycache__
+**/.pytest_cache
+*.png
+.env
+.git
+.omc
+docs
