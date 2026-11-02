@@ -1,15 +1,24 @@
 "use strict";
-/* 지도: 단계별 색 핀, 매물 목록·상세, 거래 단계 변경, 확인할 사항, 매물 등록·수정·종료 */
+/* 지도: 단계별 색 핀, 매물 목록·상세, 거래 단계 변경, 확인할 사항, 현장 메모, 매물 등록·수정·종료. 질문 결과는 app-ask */
 
 const M = {
-  scope: "mine", hidden: new Set(), match: null, matchIds: null,
+  scope: "mine", hidden: new Set(), match: null, matchIds: null, ask: null,
   map: null, markers: {}, listings: [], fittedFor: null,
   pick: false, temp: null, detailId: null,
 };
 
 VIEWS.map = async (a, b) => {
+  // 매물을 받기 전에도 화면 제목이 먼저 보이도록 (불러오는 동안의 모양)
+  if (!$("#map-side").querySelector("h1, .detail")) $("#map-side").innerHTML = `<div class="side-h"><h1>매물</h1></div><p class="loading">불러오는 중…</p>`;
   M.match = null;
   M.matchIds = null;
+  if (a === "ask" && b) {
+    const want = decodeURIComponent(b);
+    await loadAsk(want);
+    if (location.hash !== askHash(want)) return;          // 기다리는 사이 다른 질문·화면으로 이동했다
+    if (!M.ask || M.ask.q !== want) { location.hash = "#/map"; return; }   // 찾기 실패 (알림은 이미 보임)
+  } else if (a !== "l") M.ask = null;         // 질문 결과에서 매물을 열었을 때는 결과를 유지한다
+  if (M.ask) { M.matchIds = askMatchIds(); setMapScope("all", false); }
   if (a === "match" && b) {
     const [c, m] = await Promise.all([api("GET", `/customers/${b}`), api("GET", `/customers/${b}/matches`)]).catch((e) => { toast(e.message); return []; });
     if (c) { M.match = c.customer; M.matchIds = new Set(m.items.map((l) => l.id)); setMapScope("all", false); }
@@ -17,7 +26,7 @@ VIEWS.map = async (a, b) => {
   ensureMap();
   await loadListings();
   if (a === "l" && b) await renderDetail(Number(b));
-  else { M.detailId = null; renderList(); }
+  else { M.detailId = null; M.ask ? renderAsk() : renderList(); }
 };
 
 function ensureMap() {
@@ -36,7 +45,7 @@ function ensureMap() {
 }
 
 async function loadListings() {
-  const mine = M.scope === "mine" && !M.match;
+  const mine = M.scope === "mine" && !M.match && !M.ask;
   try {
     M.listings = (await api("GET", `/listings${mine ? "?mine=true" : ""}`)).items;
   } catch (e) { toast(e.message); M.listings = []; }
@@ -57,6 +66,11 @@ function renderFilter() {
     bar.innerHTML = `<span><b>${esc(c.name)}</b> 조건 (${eok(c.budget_max)} 이하, ${c.area_min ?? "-"}㎡ 이상, 역 ${c.station_walk_max ?? "-"}분): 맞는 매물 ${M.matchIds.size}건 표시</span>
       <button type="button" class="btn btn--sm" data-act="clear-match">해제</button>`;
     bar.hidden = false;
+  } else if (M.ask) {
+    const n = M.ask.result.listings.length;
+    bar.innerHTML = `<span>질문 결과: ${n ? `${M.ask.result.relaxed ? "조건에 가까운" : "맞는"} 매물 <b class="num">${n}</b>건 강조` : "맞는 매물 없음"}</span>
+      <button type="button" class="btn btn--sm" data-act="clear-ask">해제</button>`;
+    bar.hidden = false;
   } else bar.hidden = true;
 }
 
@@ -68,6 +82,31 @@ function pinHtml(l) {
     ${l.mine ? "" : `<span class="pa" title="담당 ${esc(l.agent_name)}">${esc((l.agent_name || "?")[0])}</span>`}
     <span>${esc(l.label)} ${eok(l.price)}</span><span class="pp">${STAGES.map((_, i) => `<i class="${i < n ? "on" : ""}"></i>`).join("")}</span>
     ${l.active_deals ? `<span class="pc">${l.active_deals}</span>` : ""}</div>`;
+}
+
+/* 맞는 매물이 하나도 없으면 강조하지 않는다 (모든 핀이 흐려져 지도가 빈 것처럼 보이지 않도록) */
+function askMatchIds() {
+  const ids = M.ask ? M.ask.result.listings.map((l) => l.id) : [];
+  return ids.length ? new Set(ids) : null;
+}
+
+/* 질문한 지역: 반경 원과 이름표. 지역에 맞는 매물이 없어도 지도가 그 지역으로 간다 */
+function drawPlace() {
+  if (M.placeLayer) { M.placeLayer.remove(); M.placeLayer = null; }
+  const p = M.ask && M.ask.result.place;
+  if (!p || !M.map) return null;
+  M.placeLayer = L.layerGroup().addTo(M.map);
+  const n = M.ask.result.listings.length;
+  const label = `${p.name}${p.radius_m ? ` 반경 ${p.radius_m / 1000}km` : ""} · ${n ? `맞는 매물 ${n}건` : "등록된 매물 없음"}`;
+  let bounds = L.latLngBounds([[p.lat, p.lng]]);
+  if (p.radius_m) {
+    const c = L.circle([p.lat, p.lng], { radius: p.radius_m, color: "#1b6c80", weight: 1.5, dashArray: "4 4", fillColor: "#1b6c80", fillOpacity: 0.06, interactive: false });
+    c.addTo(M.placeLayer);
+    bounds = c.getBounds();
+  }
+  L.marker([p.lat, p.lng], { interactive: false, keyboard: false,
+    icon: L.divIcon({ className: "pin-wrap", html: `<div class="place-tag">${esc(label)}</div>`, iconSize: [0, 0] }) }).addTo(M.placeLayer);
+  return bounds;
 }
 
 function renderPins() {
@@ -83,11 +122,16 @@ function renderPins() {
     m.on("click", () => { if (!M.pick) location.hash = `#/map/l/${l.id}`; });
     M.markers[l.id] = m;
   });
-  const key = `${M.scope}|${M.match ? M.match.id : ""}`;
-  if (ls.length && M.fittedFor !== key) {
+  const key = `${M.scope}|${M.match ? M.match.id : ""}|${M.ask ? M.ask.key : ""}`;
+  const placeBounds = drawPlace();
+  const focus = M.matchIds && M.matchIds.size ? ls.filter((l) => M.matchIds.has(l.id)) : ls;  // 강조된 매물이 있으면 그 매물에 맞춘다
+  if (M.fittedFor !== key && (focus.length || placeBounds)) {
     M.fittedFor = key;
+    // 질문한 지역이 있으면 그 지역(과 맞는 매물)에, 없으면 매물에 맞춘다
+    let b = placeBounds && !(M.matchIds && M.matchIds.size) ? placeBounds : L.latLngBounds(focus.map((l) => [l.lat, l.lng]));
+    if (placeBounds && M.matchIds && M.matchIds.size) b = b.extend(placeBounds);
     // 처음 맞출 때는 애니메이션 없이 — 지도가 움직이는 동안 핀 클릭이 빗나가지 않도록
-    M.map.fitBounds(L.latLngBounds(ls.map((l) => [l.lat, l.lng])).pad(0.15), { animate: false });
+    M.map.fitBounds(b.pad(0.2), { animate: false, maxZoom: placeBounds && !focus.length ? 13 : 16 });
   }
 }
 
@@ -95,7 +139,7 @@ function renderList() {
   const ls = visibleListings().sort((a, b) => stageIdx(b.stage) - stageIdx(a.stage) || a.price - b.price);
   const title = M.match ? `${M.match.name} 고객 조건` : M.scope === "mine" ? "내 매물" : "사무소 매물";
   $("#map-side").innerHTML = `
-    <div class="side-h"><h2>${esc(title)} <span class="muted num">${ls.length}</span></h2>
+    <div class="side-h"><h1>${esc(title)} <span class="muted num">${ls.length}</span></h1>
       <button type="button" class="btn btn--sm" data-act="register">매물 등록</button></div>
     <table class="tbl"><thead><tr><th></th><th>매물</th><th class="r">가격</th><th>단계</th><th>고객</th></tr></thead><tbody>
     ${ls.map((l) => `<tr class="lrow clickable ${l.mine ? "" : "is-other"}" style="--c:${l.stage === "available" ? "var(--line)" : STAGE_COLOR[l.stage]}"
@@ -144,7 +188,7 @@ async function renderDetail(id) {
   const hist = l.price_history.length > 1 ? l.price_history.map((h) => eok(h.price)).join("→") + ` (${day(l.price_history.at(-1).changed_at)})` : "";
   side.innerHTML = `
     <div class="detail" data-id="${l.id}">
-      <div class="detail-top"><button type="button" class="btn btn--sm" data-act="back">목록</button>${stageTag(l.stage)}</div>
+      <div class="detail-top"><button type="button" class="btn btn--sm" data-act="back">${M.ask ? "질문 결과" : "목록"}</button>${stageTag(l.stage)}</div>
       <h2 id="listing-detail-title">${esc(l.label)} ${esc(l.title)}</h2>
       <div class="price num">${eok(l.price)}${hist ? ` <span class="muted" style="font-size:12px;font-weight:400">${esc(hist)}</span>` : ""}</div>
       ${prog(l.stage, true)}<div class="prog-labels">${STAGES.map((s, i) => `<span class="${i === n - 1 ? "cur" : ""}">${STAGE_LABEL[s]}</span>`).join("")}</div>
@@ -160,6 +204,15 @@ async function renderDetail(id) {
           <label class="txt" for="ck-${esc(c.key)}">${esc(c.text)}</label>
           <span class="src">${c.sources.length ? `출처: ${c.sources.map((s) => srcLink(s)).join(", ")}` : "출처 없음"}</span>
           ${c.checked ? `<span class="by">${esc(c.checked_by)} 확인 · ${dateTime(c.checked_at)}</span>` : ""}</li>`).join("")}</ul>
+      </div>
+
+      <div class="sec"><div class="sec-h"><h2>현장 메모</h2><span class="muted">질문 검색에 함께 쓰입니다</span></div>
+        <ul class="notes">${r.notes.map((nt) => `<li>${esc(nt.text)}<span class="by">${esc(nt.by)} · ${dateTime(nt.created_at)}${
+          nt.user_id === S.user.id || S.user.role === "admin" ? `<button type="button" data-act="del-note" data-id="${l.id}" data-note="${nt.id}">지우기</button>` : ""}</span></li>`).join("")
+          || `<li class="muted">아직 메모가 없습니다.</li>`}</ul>
+        <form class="note-form" id="note-form" data-id="${l.id}">
+          <textarea name="text" rows="2" maxlength="1000" placeholder="예: 남향, 밤에 조용함, 주차 여유" aria-label="현장 메모"></textarea>
+          <button type="submit" class="btn btn--sm">남기기</button></form>
       </div>
 
       <div class="sec"><div class="sec-h"><h2>매물 정보</h2><span class="muted">담당 ${esc(l.agent_name)}</span></div>
@@ -194,7 +247,7 @@ ACTIONS["drop-ok"] = (el) => changeStage(el, el.dataset.id, "dropped", $("#drop-
 ACTIONS["close-dialog"] = closeDialog;
 
 ACTIONS.open = (el) => { location.hash = `#/map/l/${el.dataset.id}`; };
-ACTIONS.back = () => { location.hash = M.match ? `#/map/match/${M.match.id}` : "#/map"; };
+ACTIONS.back = () => { location.hash = M.ask ? askHash(M.ask.q) : M.match ? `#/map/match/${M.match.id}` : "#/map"; };
 ACTIONS.filter = (el) => {
   const s = el.dataset.s;
   M.hidden.has(s) ? M.hidden.delete(s) : M.hidden.add(s);
@@ -225,6 +278,22 @@ document.addEventListener("change", async (e) => {
   } catch (ex) { el.checked = !el.checked; toast(ex.message); }
   finally { el.disabled = false; }
 });
+
+// 현장 메모
+document.addEventListener("submit", async (e) => {
+  const form = e.target.closest("#note-form");
+  if (!form) return;
+  e.preventDefault();
+  const text = form.text.value.trim();
+  if (!text) { form.text.focus(); return; }
+  const r = await busy(form.querySelector("button"), () => api("POST", `/listings/${form.dataset.id}/notes`, { text }));
+  if (r) { if (M.ask) M.ask.key += "*"; toast("메모를 남겼습니다."); renderDetail(Number(form.dataset.id)); }  // 다음 질문 결과는 새로 찾는다
+});
+ACTIONS["del-note"] = async (el) => {
+  if (!confirm("이 메모를 지울까요?")) return;
+  const r = await busy(el, () => api("DELETE", `/listings/${el.dataset.id}/notes/${el.dataset.note}`));
+  if (r) renderDetail(Number(el.dataset.id));
+};
 
 // 고객 연결
 ACTIONS.link = async (el) => {
@@ -292,6 +361,8 @@ function endPick() {
   if (M.temp) { M.temp.remove(); M.temp = null; }
 }
 addEventListener("hashchange", endPick);
+// 지도 밖 화면으로 가면 질문 결과를 잊는다 (다른 화면에서 매물을 열었을 때 이전 질문으로 돌아가지 않도록)
+addEventListener("hashchange", () => { if (!location.hash.startsWith("#/map")) M.ask = null; });
 
 ACTIONS.register = () => listingForm(null);
 ACTIONS["edit-listing"] = () => listingForm(M.current);

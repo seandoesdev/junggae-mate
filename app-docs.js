@@ -1,20 +1,24 @@
 "use strict";
 /* 자료실(문서 근거 검색)과 고객 자료(비교표·문의 답변) */
 
-const D = { q: "", type: "", items: [], sel: null, timer: null };
+const D = { q: "", type: "", items: [], sel: null, timer: null, docs: {} };
 const LIB_TYPES = [["", "전체"], ["law", "법령"], ["policy", "정책"], ["office", "사무소"], ["news", "기사"]];
 
 // ── 자료실 ─────────────────────────────────────────
 VIEWS.library = () => {
   $("#library-side").innerHTML = `
-    <div class="side-h"><h2>자료실</h2>${S.user.role === "admin" ? `<button type="button" class="btn btn--sm" data-act="upload">문서 등록</button>` : ""}</div>
+    <div class="side-h"><h1>자료실</h1><span>
+      <button type="button" class="btn btn--sm" data-act="add-doc">자료 추가</button>
+      ${S.user.role === "admin" ? `<button type="button" class="btn btn--sm" data-act="upload">파일 등록</button>` : ""}</span></div>
     <form class="search" id="lib-form">
       <input id="lib-q" type="search" placeholder="예: 거래 신고 기한, 생애최초, 학구도" value="${esc(D.q)}" aria-label="자료 검색어" autocomplete="off" />
       <div class="types" role="group" aria-label="자료 종류">${LIB_TYPES.map(([t, w]) =>
         `<button type="button" data-act="lib-type" data-t="${t || "all"}" aria-pressed="${D.type === t}">${w}</button>`).join("")}</div>
+      <button type="button" class="btn btn--sm" data-act="lib-ask" style="justify-self:start">이 내용으로 질문하기 (매물·실거래가 함께)</button>
     </form>
     <div id="lib-hits"><p class="loading">불러오는 중…</p></div>`;
-  searchLibrary();
+  // 검색 결과에서도 '내가 추가한 자료'인지 알 수 있도록 문서 목록을 한 번 받아 둔다
+  api("GET", "/documents").then((ds) => { D.docs = Object.fromEntries(ds.map((d) => [d.id, d])); }).catch(() => {}).finally(searchLibrary);
 };
 
 async function searchLibrary() {
@@ -25,6 +29,7 @@ async function searchLibrary() {
       D.items = r.items.map((e) => ({ kind: "hit", ev: remember(e) }));
     } else {
       const docs = await api("GET", `/documents${D.type ? `?type=${D.type}` : ""}`);
+      docs.forEach((d) => { D.docs[d.id] = d; });
       D.items = docs.map((d) => ({ kind: "doc", doc: d }));
     }
   } catch (e) { toast(e.message); D.items = []; }
@@ -60,7 +65,9 @@ async function showLibraryItem(id) {
   if (!ev) {
     try { ev = remember(await api("GET", `/evidence/${id}`)); } catch (e) { toast(e.message); return; }
   }
-  $("#library-detail").innerHTML = sourceBody(ev, { inLibrary: true, query: D.q });
+  const doc = D.docs[ev.document_id];
+  $("#library-detail").innerHTML = sourceBody(ev, { inLibrary: true, query: D.q })
+    + (doc && doc.mine ? `<p><button type="button" class="btn btn--sm" data-act="del-doc" data-doc="${doc.id}">이 자료 지우기</button></p>` : "");
 }
 
 document.addEventListener("input", (e) => {
@@ -107,7 +114,36 @@ ACTIONS["quote-ok"] = async (el) => {
   if (r) location.hash = `#/report/${r.id}`;
 };
 
-ACTIONS.upload = () => openDialog(`<h2>문서 등록</h2>
+ACTIONS["lib-ask"] = () => {
+  const q = $("#lib-q").value.trim();
+  if (!q) { toast("물어볼 내용을 검색창에 적어 주세요."); $("#lib-q").focus(); return; }
+  location.hash = askHash(q);
+};
+
+// 중개사가 직접 적는 사무소 자료 (단지 정보, 현장 확인 내용, 학구도 확인 결과 등)
+ACTIONS["add-doc"] = () => openDialog(`<h2>자료 추가</h2>
+  <p class="muted" style="font-size:12px;margin:0 0 8px">우리 사무소에서만 보이며, 질문 검색과 고객 자료의 근거로 바로 쓰입니다. 단지 이름을 적으면 그 단지 매물을 찾을 때 함께 봅니다.</p>
+  <label>제목<input id="doc-title" maxlength="200" placeholder="예: 용강리버뷰 단지 확인 내용" /></label>
+  <label>내용<textarea id="doc-text" rows="8" maxlength="20000" placeholder="예: 용강리버뷰 아파트는 2026년 학구도 기준 용강초 배정 구역입니다(교육지원청 확인, 2026-10)."></textarea></label>
+  <label>지역 (선택)<input id="doc-region" maxlength="30" placeholder="예: 마포구" /></label>
+  <div class="btns"><button type="button" class="btn" data-act="close-dialog">취소</button><button type="button" class="btn btn--main" data-act="add-doc-ok">추가</button></div>`);
+ACTIONS["add-doc-ok"] = async (el) => {
+  const body = { title: $("#doc-title").value.trim(), text: $("#doc-text").value.trim(), region: $("#doc-region").value.trim() || null };
+  if (!body.title || body.text.length < 5) { toast("제목과 내용을 적어 주세요."); return; }
+  const r = await busy(el, () => api("POST", "/documents", body));
+  if (!r) return;
+  closeDialog();
+  toast("자료를 추가했습니다. 질문 검색에 바로 쓰입니다.");
+  D.q = ""; D.type = ""; D.sel = r.first_chunk;
+  VIEWS.library();
+};
+ACTIONS["del-doc"] = async (el) => {
+  if (!confirm("이 자료를 지울까요? 질문 검색과 이후 고객 자료에서 더 이상 쓰이지 않습니다.")) return;
+  const r = await busy(el, () => api("DELETE", `/documents/${el.dataset.doc}`));
+  if (r) { toast("자료를 지웠습니다."); D.sel = null; VIEWS.library(); }
+};
+
+ACTIONS.upload = () => openDialog(`<h2>파일 등록</h2>
   <label>파일 (txt, md, pdf)<input id="up-file" type="file" accept=".txt,.md,.pdf" /></label>
   <label>제목<input id="up-title" maxlength="200" /></label>
   <div class="row2"><label>종류<select id="up-type"><option value="office">사무소 문서</option><option value="law">법령</option><option value="policy">공식 정책</option><option value="news">기사(이용 허용분)</option></select></label>
