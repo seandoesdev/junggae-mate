@@ -33,6 +33,28 @@ LISTINGS_T1 = [
     ("K", "공덕자이 74", "공덕자이", 99000, 74.5, "8/21층", "공덕역", 3, 10, 37.5432, 126.9555, "park", []),
     ("L", "마포한신 52", "마포한신", 64000, 52.0, "6/12층", "애오개역", 9, 6, 37.5515, 126.9500, "lee", []),
 ]
+# 매물 설명 (중개사가 등록할 때 적는 내용, 샘플)
+DESCRIPTIONS = {
+    "A": "남향 판상형. 거실에서 한강 일부 조망. 단지 안쪽 동이라 조용한 편.",
+    "B": "공원 바로 앞 단지. 저층이라 공원 산책로 소음이 조금 있음. 가격 조정됨.",
+    "C": "공덕역 4번 출구 도보 4분. 2019년 준공 신축급. 주차 세대당 1.3대.",
+    "D": "84㎡ 대형 평면, 방 3개 욕실 2개. 2021년 전체 수리.",
+    "E": "소형 평면, 아현역 가까움. 첫 집으로 문의 많음.",
+    "F": "마포역까지는 멀지만 버스 노선 많음. 동향.",
+    "G": "숲길 공원 인접, 고층이라 조망 좋음. 조용한 주거지.",
+    "H": "언덕 위 저층 단지, 가격 부담 적음. 엘리베이터 없음.",
+    "I": "84㎡, 남향, 초등학교 도보 5분. 학군 수요 많음.",
+    "J": "한강 조망 좋은 고층. 주차 여유. 마포역 도보 6분.",
+    "K": "공덕역 초역세권, 2018년 준공. 남향.",
+    "L": "소형, 리모델링 완료. 애오개역 도보 9분.",
+}
+NOTES = [  # 매물, 담당 키, 현장 메모
+    ("A", "kim", "10/27 현장 확인: 남향, 오후 햇빛 좋음. 엘리베이터 교체 공사 11월 예정."),
+    ("B", "kim", "매도인 이사 일정 12월 말 희망. 가격 추가 조정 여지 있음."),
+    ("G", "kim", "단지 뒤 숲길 산책로 바로 연결. 밤에 조용함."),
+    ("K", "park", "관리비 월 32만 원 수준(84㎡ 기준 아님, 74㎡). 하자 보수 1건 진행 중."),
+]
+
 LISTINGS_T2 = [("A", "연희언덕집 59", "연희언덕", 69000, 59.0, "2/5층", "신촌역", 12, 5, 37.5660, 126.9300, "other", [])]
 
 CUSTOMERS_T1 = [
@@ -83,30 +105,30 @@ DOCS = [
              "권리관계, 법령의 규정에 의한 거래 또는 이용제한사항 등을 확인하여 이를 권리를 취득하고자 하는 중개의뢰인에게 성실·정확하게 "
              "설명하고, 등기사항증명서 등 설명의 근거자료를 제시하여야 한다.")),
     dict(tenant=None, source_type="policy", title="[샘플] 생애최초 주택 구입 지원 안내", publisher="국토교통부 (시연용 샘플)",
-         published_at="2026-09-30", effective_date="2026-11-01", url="https://www.molit.go.kr/",
-         facts={EFFECTIVE_KEY: {"label": EFFECTIVE_LABEL, "value": "2026-11-01"}}, text=(
+         published_at="2026-09-30", effective_date="2027-03-01", url="https://www.molit.go.kr/",
+         facts={EFFECTIVE_KEY: {"label": EFFECTIVE_LABEL, "value": "2027-03-01"}}, text=(
              "# 지원 대상\n생애최초로 주택을 구입하는 무주택 세대주로서 부부합산 연소득 7천만 원 이하인 경우 생애최초 주택 구입 지원 대상입니다.\n"
              "# 지원 내용\n주택가격 9억 원 이하 주택을 구입하는 경우 최대 3억 원까지 저리 구입자금 대출을 지원합니다.\n"
-             "# 시행일\n생애최초 주택 구입 지원정책은 2026년 11월 1일부터 시행되며 시행일 이후 신청분부터 적용됩니다.\n"
+             "# 시행일\n생애최초 주택 구입 지원정책은 2027년 3월 1일부터 시행되며 시행일 이후 신청분부터 적용됩니다.\n"
              "# 신청 방법\n취급 은행 창구 또는 주택도시기금 누리집에서 신청하며 소득·무주택 확인 서류를 제출합니다.")),
     dict(tenant=None, source_type="policy", title="[샘플] 생애최초 주택 구입 지원 자주 묻는 질문", publisher="국토교통부 (시연용 샘플)",
-         published_at="2026-10-01", effective_date="2026-11-01",
-         facts={EFFECTIVE_KEY: {"label": EFFECTIVE_LABEL, "value": "2026-11-01"}}, text=(
+         published_at="2026-10-01", effective_date="2027-03-01",
+         facts={EFFECTIVE_KEY: {"label": EFFECTIVE_LABEL, "value": "2027-03-01"}}, text=(
              "Q. 과거에 주택을 보유한 적이 있으면 신청할 수 있나요? 세대 구성원 전원이 과거 주택을 소유한 사실이 없어야 생애최초 지원 대상입니다.\n"
              "Q. 서울 지역 아파트도 지원 대상인가요? 지역과 관계없이 주택가격 9억 원 이하이면 동일하게 적용됩니다.\n"
-             "Q. 시행일 전에 계약하면 지원을 받을 수 있나요? 시행일인 2026년 11월 1일 이후 신청분부터 적용되므로 시행 전 신청은 지원 대상이 아닙니다.")),
+             "Q. 시행일 전에 계약하면 지원을 받을 수 있나요? 시행일인 2027년 3월 1일 이후 신청분부터 적용되므로 시행 전 신청은 지원 대상이 아닙니다.")),
     dict(tenant=None, source_type="policy", title="[샘플] 서울시 생애최초 주택 구입 지원 연계 보도자료", publisher="서울특별시 (시연용 샘플)",
-         published_at="2026-10-02", effective_date="2026-11-01", region="서울",
-         facts={EFFECTIVE_KEY: {"label": EFFECTIVE_LABEL, "value": "2026-11-01"}}, text=(
-             "# 보도 내용\n서울시는 국토교통부 생애최초 주택 구입 지원정책 시행(2026년 11월 1일)에 맞춰 시민 상담 창구를 운영한다고 밝혔습니다. "
+         published_at="2026-10-02", effective_date="2027-03-01", region="서울",
+         facts={EFFECTIVE_KEY: {"label": EFFECTIVE_LABEL, "value": "2027-03-01"}}, text=(
+             "# 보도 내용\n서울시는 국토교통부 생애최초 주택 구입 지원정책 시행(2027년 3월 1일)에 맞춰 시민 상담 창구를 운영한다고 밝혔습니다. "
              "자치구 주거복지센터에서 신청 서류 안내를 받을 수 있습니다.")),
     dict(tenant=None, source_type="policy", title="[샘플] 부산시 주택 구입 지원 안내", publisher="부산광역시 (시연용 샘플)",
          published_at="2026-09-01", region="부산", text=(
              "# 지원 내용\n부산시에 주민등록을 둔 신혼부부가 부산 소재 주택을 구입하는 경우 대출 이자 일부를 지원합니다.")),
     dict(tenant=None, source_type="news", title="[샘플] 서울 주택시장 동향 기사", publisher="샘플경제신문 (이용 허용 기사 · 제공 요약)",
          published_at="2026-10-21", region="서울", license="제목·제공 요약·링크만 사용 (본문 미저장)",
-         facts={EFFECTIVE_KEY: {"label": EFFECTIVE_LABEL, "value": "2026-10-15"}}, text=(
-             "# 기사 요약\n생애최초 주택 구입 지원정책이 10월 15일부터 시행된다고 보도되었습니다. 마포구 등 서울 서북권 아파트 매수 문의가 "
+         facts={EFFECTIVE_KEY: {"label": EFFECTIVE_LABEL, "value": "2027-02-15"}}, text=(
+             "# 기사 요약\n생애최초 주택 구입 지원정책이 내년 2월 15일부터 시행된다고 보도되었습니다. 마포구 등 서울 서북권 아파트 매수 문의가 "
              "늘었다는 내용입니다. (제공 요약이며 기사 본문이 아닙니다)")),
     dict(tenant=1, source_type="office", title="하늘공인중개사 매수 상담 확인 절차", publisher="하늘공인중개사사무소 (내부 문서 · 승인본 v3)",
          published_at="2026-08-01", text=(
@@ -147,12 +169,17 @@ def seed() -> None:
                                              source_date, created_at)
                        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING id""",
                     (tenant, users[agent], label, title, cx, f"서울 {district} {cx}로 {10 + len(cx)}", district, price, area, floor,
-                     st, walk, park, lat, lng, "시연용 샘플 매물입니다. 실제 매물이 아닙니다.", "중개사 직접 등록 (샘플)",
+                     st, walk, park, lat, lng, DESCRIPTIONS.get(label, "") + " (시연용 샘플 매물)" if tenant == t1
+                     else "시연용 샘플 매물입니다. 실제 매물이 아닙니다.", "중개사 직접 등록 (샘플)",
                      "2026-10-28", f"2026-10-{1 + i:02d} 10:00+09"),
                 ).fetchone()["id"]
                 ids[(tenant, label)] = lid
                 for p, at in hist or [(price, "2026-10-01")]:
                     conn.execute("INSERT INTO listing_price_history (listing_id, price, changed_at) VALUES (%s,%s,%s)", (lid, p, at))
+
+        for label, agent, text in NOTES:
+            conn.execute("INSERT INTO listing_notes (listing_id, user_id, text, created_at) VALUES (%s,%s,%s,'2026-10-28 18:00+09')",
+                         (ids[(t1, label)], users[agent], text))
 
         cust = {}
         for name, agent, phone, budget, area_min, walk, prefs, first_home in CUSTOMERS_T1:

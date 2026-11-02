@@ -304,3 +304,157 @@ def test_admin_documents_and_audit(client, admin, kim):
     events = {e["event"] for e in client.get("/api/audit", headers=admin).json()}
     assert {"deal.stage_changed", "report.approved", "report.shared", "listing.check"} <= events
     assert client.get("/api/audit", headers=kim).status_code == 403
+
+
+# ---------- 질문 검색 ----------
+
+def test_parse_query_rules():
+    from app.assistant import parse_query
+    f = parse_query("마포구 8억 이하 59㎡ 초등학교 가까운 집")
+    assert f["district"] == "마포구" and f["price_max"] == 80000 and f["price_min"] is None
+    assert f["area_min"] < 59 < f["area_max"] and f["wants"] == ["학교"]
+    f = parse_query("7~9억 25평 역세권 조용한 아파트")
+    assert (f["price_min"], f["price_max"]) == (70000, 90000) and f["walk_max"] == 10
+    assert 55 < f["area_min"] < 62 < f["area_max"] and "조용한" in f["wants"]
+    assert parse_query("8억 5천 이상")["price_min"] == 85000
+    assert parse_query("8억대 마포")["price_max"] == 89999
+    assert parse_query("공덕 근처 역 5분", known_stations=["공덕역", "마포역"])["station"] == "공덕역"
+    assert parse_query("생애최초로 살 수 있는 집")["first_home"] is True
+
+
+def test_search_finds_listings_with_documents(client, kim, L):
+    r = client.post("/api/search", headers=kim, json={"q": "마포구 8억 이하 59㎡ 학교 가까운 집"})
+    assert r.status_code == 200, r.text
+    res = r.json()
+    labels = [l["label"] for l in res["listings"]]
+    assert labels and all(l["price"] <= 80000 for l in res["listings"]) and not res["relaxed"]
+    assert labels[0] in ("A", "B")  # 사무소 통학 메모에 배정 학교가 적힌 단지가 먼저
+    assert {"district", "price", "area", "want:학교"} <= {c["key"] for c in res["understood"]}
+    assert "마포초" in res["opinion"]
+    assert set(_tokens(res["opinion"] + " ".join(res["to_check"]))) <= {s["id"] for s in res["sources"]}
+    assert {s["id"][0] for s in res["sources"]} >= {"l", "c"}
+    # 조건 지우기: 가격 조건을 지우면 8억 넘는 매물도 나온다
+    wider = client.post("/api/search", headers=kim, json={"q": "마포구 8억 이하 59㎡ 학교 가까운 집", "drop": ["price"]}).json()
+    assert any(l["price"] > 80000 for l in wider["listings"]) and "price" not in {c["key"] for c in wider["understood"]}
+    # 조건을 모두 만족하는 매물이 없으면 가까운 매물
+    near = client.post("/api/search", headers=kim, json={"q": "마포구 6.5억 이하 59㎡"}).json()
+    assert near["relaxed"] and near["listings"] and near["listings"][0]["unmet"]
+    assert "생애최초" not in near["opinion"]  # 매물만 찾는 질문에 관련 없는 정책 문장이 붙지 않는다
+    assert client.post("/api/search", headers=kim, json={"q": ""}).status_code == 422
+
+
+def test_search_policy_and_market_questions(client, kim):
+    law = client.post("/api/search", headers=kim, json={"q": "부동산 거래 신고는 계약 후 며칠 안에 해야 하나요?"}).json()
+    assert not law["listings"] and "30일" in law["opinion"]
+    policy = client.post("/api/search", headers=kim, json={"q": "생애최초 지원받을 수 있는 9억 이하 아파트"}).json()
+    assert policy["gate"]["status"] == "conflict" and "공식 자료인" in policy["opinion"]
+    assert any("시행 이후" in t for t in policy["to_check"]) and all(l["price"] <= 90000 for l in policy["listings"])
+    market = client.post("/api/search", headers=kim, json={"q": "마포구 아파트 시세 동향 어때?"}).json()
+    assert any(s["id"] == "t0" for s in market["sources"])
+
+
+def test_listing_notes_feed_search(client, kim, park, L):
+    lid = L["H"]  # 이도현 담당 매물에도 사무소 누구나 메모를 남길 수 있다
+    note = client.post(f"/api/listings/{lid}/notes", headers=kim, json={"text": "10/30 방문: 남향, 밤에 조용함"})
+    assert note.status_code == 201 and note.json()["by"] == "김선용"
+    assert client.get(f"/api/listings/{lid}", headers=kim).json()["notes"][0]["text"].startswith("10/30")
+    res = client.post("/api/search", headers=kim, json={"q": "조용한 남향 집"}).json()
+    hit = next(l for l in res["listings"] if l["id"] == lid)
+    assert any("밤에 조용함" in m["text"] for m in hit["matched"])
+    nid = note.json()["id"]
+    assert client.delete(f"/api/listings/{lid}/notes/{nid}", headers=park).status_code == 403
+    assert client.delete(f"/api/listings/{lid}/notes/{nid}", headers=kim).status_code == 200
+    assert client.post(f"/api/listings/{lid}/notes", headers=kim, json={"text": ""}).status_code == 422
+
+
+def test_agent_documents_feed_search(client, kim, park, other, L):
+    body = {"title": "용강리버뷰 단지 확인 내용", "text": "용강리버뷰 아파트는 2026년 학구도 기준 용강초 배정 구역입니다. 단지 안 놀이터 2곳."}
+    r = client.post("/api/documents", headers=kim, json=body)
+    assert r.status_code == 201, r.text
+    assert client.post("/api/documents", headers=kim, json=body).status_code == 409
+    docs = client.get("/api/documents?type=office", headers=kim).json()
+    mine = next(d for d in docs if d["id"] == r.json()["id"])
+    assert mine["mine"] and mine["author"] == "김선용"
+    res = client.post("/api/search", headers=kim, json={"q": "학교 가까운 아파트"}).json()
+    j = next(l for l in res["listings"] if l["label"] == "J")
+    assert any("용강초" in m["text"] for m in j["matched"])
+    hits = client.get("/api/evidence/search", params={"q": "용강초 배정"}, headers=other).json()["items"]
+    assert all("용강초" not in h["snippet"] for h in hits)  # 다른 사무소에는 보이지 않는다
+    assert client.delete(f"/api/documents/{r.json()['id']}", headers=park).status_code == 403
+    assert client.delete(f"/api/documents/{r.json()['id']}", headers=kim).status_code == 200
+
+
+def test_search_review_regressions(client, kim, C):
+    from app.assistant import normalize_region, parse_query
+    stations, complexes = ["공덕역", "마포역", "애오개역"], ["마포한강뷰", "공덕자이", "마포한신"]
+    f = parse_query("마포한강뷰 학교 가까운 집", stations, complexes)
+    assert f["complex"] == "마포한강뷰" and f["station"] is None   # 단지 이름의 '마포'를 마포역으로 읽지 않는다
+    assert parse_query("공덕자이 시세", stations, complexes)["station"] is None
+    assert parse_query("공덕 근처 59㎡", stations, complexes)["station"] == "공덕역"
+    res = client.post("/api/search", headers=kim, json={"q": "마포한강뷰 학교 가까운 집"}).json()
+    assert [l["label"] for l in res["listings"]] == ["A"]
+    none = client.post("/api/search", headers=kim, json={"q": "엘리베이터 신축 주차 넉넉한 집 수영장"}).json()
+    assert all(l["matched"] for l in none["listings"])            # 확인 안 된 매물을 '맞는 매물'로 보여 주지 않는다
+    wide = client.post("/api/search", headers=kim, json={"q": "마포구 8억 이하 집", "drop": ["district", "price"]}).json()
+    assert len(wide["listings"]) >= 8                             # 조건을 모두 빼면 전체를 관련도 순으로
+    rep = client.post(f"/api/customers/{C['박서준']}/reports", headers=kim,
+                      json={"kind": "answer", "question": "마포구 8억 이하 59㎡ 집", "drop": ["price"]}).json()
+    assert any(l["price"] > 80000 for l in rep["listings"])      # 화면에서 뺀 조건은 고객 자료에서도 빠진다
+    assert normalize_region("마포구") == normalize_region("서울시 마포구") == "서울 마포구"
+    assert normalize_region("서울특별시") == "서울" and normalize_region(" ") is None
+
+
+# ---------- 지역 이름·Hood AI ----------
+
+def test_place_search_outside_office_area(client, kim):
+    r = client.post("/api/search", headers=kim, json={"q": "동탄 매물 보여줘"}).json()
+    assert r["listing_intent"] and r["listings"] == []
+    assert r["place"]["name"] == "동탄" and r["place"]["radius_m"] == 5000 and 37.1 < r["place"]["lat"] < 37.3
+    assert any(c["key"] == "place" for c in r["understood"])
+    assert "동탄" in r["opinion"] and "마포구" in r["opinion"]            # 없다고만 하지 않고 지금 있는 곳을 알려 준다
+    near = client.post("/api/search", headers=kim, json={"q": "공덕동 매물"}).json()
+    assert near["listings"] and all(l["district"] == "마포구" for l in near["listings"])
+    assert client.post("/api/search", headers=kim, json={"q": "매물 보여줘"}).json()["listings"]   # 조건 없이도 목록
+    gangnam = client.post("/api/search", headers=kim, json={"q": "강남구 아파트"}).json()
+    assert gangnam["listings"] == [] and gangnam["place"]["name"] == "강남구" and "강남구에는" in gangnam["opinion"]
+
+
+def test_hood_sessions_follow_up_and_history(client, kim, park):
+    first = client.post("/api/search", headers=kim, json={"q": "마포구 59㎡ 집"}).json()
+    sid = first["session_id"]
+    follow = client.post("/api/search", headers=kim, json={"q": "그중 7.6억 이하만", "session_id": sid}).json()
+    assert follow["session_id"] == sid and follow["effective_query"] == "마포구 59㎡ 집 7.6억 이하만"
+    assert follow["listings"] and all(l["price"] <= 76000 for l in follow["listings"])
+    again = client.post("/api/search", headers=kim, json={"q": "그중 7.6억 이하만", "session_id": sid, "drop": ["price"]}).json()
+    assert again["message_id"] == follow["message_id"]                 # 조건 빼기는 같은 답을 바꾼다
+    sessions = client.get("/api/ai/sessions", headers=kim).json()
+    assert sessions[0]["id"] == sid and sessions[0]["messages"] == 2
+    detail = client.get(f"/api/ai/sessions/{sid}", headers=kim).json()
+    assert [m["question"] for m in detail["messages"]] == ["마포구 59㎡ 집", "그중 7.6억 이하만"]
+    assert client.get(f"/api/ai/sessions/{sid}", headers=park).status_code == 404   # 남의 대화는 볼 수 없다
+    assert client.post("/api/search", headers=park, json={"q": "x", "session_id": sid}).status_code == 404
+    assert client.delete(f"/api/ai/sessions/{sid}", headers=kim).status_code == 200
+    assert client.get(f"/api/ai/sessions/{sid}", headers=kim).status_code == 404
+
+
+def test_hood_settings_usage_and_reports(client, kim, admin, C):
+    s = client.get("/api/ai/settings", headers=kim).json()
+    assert s["can_edit"] is False and s["detail_count"] == 3 and set(s["source_types"]) == {"law", "policy", "office", "news"}
+    body = {"source_types": ["law", "policy", "office"], "detail_count": 2, "near_miss": False, "monthly_limit": None}
+    assert client.put("/api/ai/settings", headers=kim, json=body).status_code == 403
+    saved = client.put("/api/ai/settings", headers=admin, json=body).json()
+    assert saved["detail_count"] == 2 and saved["updated_by"] == "하늘 관리자"
+    r = client.post("/api/search", headers=kim, json={"q": "마포구 아파트 시세 동향"}).json()
+    assert all(src["type"] != "news" for src in r["sources"])           # 기사를 빼면 답변에 기사가 없다
+    assert not client.post("/api/search", headers=kim, json={"q": "마포구 6.5억 이하 59㎡"}).json()["relaxed"]
+    used = client.get("/api/ai/settings", headers=kim).json()["month_used"]
+    client.put("/api/ai/settings", headers=admin, json={**body, "monthly_limit": used})
+    assert client.post("/api/search", headers=kim, json={"q": "매물 보여줘"}).status_code == 429
+    client.put("/api/ai/settings", headers=admin, json={"source_types": ["law", "policy", "office", "news"], "detail_count": 3,
+                                                        "near_miss": True, "monthly_limit": None})
+    u = client.get("/api/ai/usage", headers=kim).json()
+    assert u["month_total"] == used and len(u["daily"]) == 14 and u["daily"][-1]["date"] == u["today"]
+    assert sum(x["count"] for x in u["by_user"]) == u["month_total"] and u["today_total"] <= u["month_total"]
+    reps = client.get("/api/reports", headers=kim).json()
+    assert reps["counts"]["all"] == len(reps["items"]) >= 1
+    assert all(x["state"] in ("approved", "shared") for x in client.get("/api/reports?state=done", headers=kim).json()["items"])

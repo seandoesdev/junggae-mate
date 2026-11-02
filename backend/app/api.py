@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, Uplo
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
 
-from . import drafting, llm, public_data, rag, workflow
+from . import assistant, drafting, hood, llm, public_data, rag, workflow
 from .audit import record
 from .db import fetch_one, pool, tx
 from .security import CurrentUser, create_token, current_user, require_admin, verify_password
@@ -94,6 +94,7 @@ class ReportIn(BaseModel):
     listing_ids: list[int] | None = None
     question: str | None = Field(None, max_length=1000)
     quote_id: str | None = Field(None, max_length=20)
+    drop: list[str] = Field(default_factory=list, max_length=20, description="질문 검색에서 뺀 조건 (문의 답변)")
 
 
 class ReportEditIn(BaseModel):
@@ -103,6 +104,29 @@ class ReportEditIn(BaseModel):
 
 class ApproveIn(BaseModel):
     confirm: bool
+
+
+class SearchIn(BaseModel):
+    q: str = Field(..., min_length=1, max_length=500)
+    drop: list[str] = Field(default_factory=list, max_length=20, description="지울 조건 key (예: price, want:학교)")
+    session_id: int | None = Field(None, description="이어서 물을 대화. 없으면 새 대화를 만든다")
+
+
+class AISettingsIn(BaseModel):
+    source_types: list[Literal["law", "policy", "office", "news"]] = Field(..., min_length=1)
+    detail_count: int = Field(3, ge=1, le=5)
+    near_miss: bool = True
+    monthly_limit: int | None = Field(None, ge=1, le=100000)
+
+
+class NoteIn(BaseModel):
+    text: str = Field(..., min_length=1, max_length=1000)
+
+
+class DocumentIn(_Clean):
+    title: str = Field(..., min_length=1, max_length=200)
+    text: str = Field(..., min_length=5, max_length=20000)
+    region: str | None = Field(None, max_length=30)
 
 
 class TradeCollectIn(BaseModel):
@@ -122,6 +146,8 @@ def _guard(fn, *args, **kwargs):
         raise HTTPException(403, str(e))
     except llm.LLMUnavailable as e:
         raise HTTPException(503, f"문서 초안을 만들지 못했습니다({e}). 매물·고객·거래 기능은 계속 쓸 수 있습니다.")
+    except hood.LimitReached as e:
+        raise HTTPException(429, str(e))
 
 
 def _listing(conn, user: CurrentUser, listing_id: int, include_closed: bool = False) -> dict:
@@ -223,7 +249,32 @@ def get_listing(listing_id: int, user: CurrentUser = Depends(current_user)):
         listing = _listing(conn, user, listing_id)
         return {"listing": listing, "trade_reference": drafting.trade_reference(conn, listing),
                 "deals": workflow.list_deals(conn, user.tenant_id, listing_id=listing_id),
-                "checks": workflow.listing_checks(conn, user, listing)}
+                "checks": workflow.listing_checks(conn, user, listing),
+                "notes": assistant.listing_notes(conn, [listing_id]).get(listing_id, [])}
+
+
+@router.post("/listings/{listing_id}/notes", status_code=201)
+def add_listing_note(listing_id: int, body: NoteIn, user: CurrentUser = Depends(current_user)):
+    """현장 메모는 사무소 누구나 적을 수 있다 (질문 검색에서 매물을 찾을 때 함께 본다)."""
+    with tx() as conn:
+        _listing(conn, user, listing_id)
+        row = conn.execute("INSERT INTO listing_notes (listing_id, user_id, text) VALUES (%s,%s,%s) RETURNING id",
+                           (listing_id, user.id, body.text.strip())).fetchone()
+        record(conn, tenant_id=user.tenant_id, user_id=user.id, event="listing.note_added", entity="listing", entity_id=listing_id)
+        return next(n for n in assistant.listing_notes(conn, [listing_id])[listing_id] if n["id"] == row["id"])
+
+
+@router.delete("/listings/{listing_id}/notes/{note_id}")
+def delete_listing_note(listing_id: int, note_id: int, user: CurrentUser = Depends(current_user)):
+    with tx() as conn:
+        _listing(conn, user, listing_id)
+        note = conn.execute("SELECT user_id FROM listing_notes WHERE id = %s AND listing_id = %s", (note_id, listing_id)).fetchone()
+        if not note:
+            raise HTTPException(404, "메모를 찾을 수 없습니다.")
+        if note["user_id"] != user.id and user.role != "admin":
+            raise HTTPException(403, "메모를 쓴 사람이나 관리자만 지울 수 있습니다.")
+        conn.execute("DELETE FROM listing_notes WHERE id = %s", (note_id,))
+    return {"deleted": note_id}
 
 
 @router.put("/listings/{listing_id}/checks/{key}")
@@ -390,7 +441,7 @@ def create_report(cid: int, body: ReportIn, request: Request, user: CurrentUser 
     with tx() as conn:
         customer = _customer(conn, user, cid)
         rid = _guard(workflow.create_report, conn, user, customer, body.kind,
-                     listing_ids=body.listing_ids, question=body.question, quote_id=body.quote_id)
+                     listing_ids=body.listing_ids, question=body.question, quote_id=body.quote_id, drop=body.drop)
         return _report(conn, user, rid, request)
 
 
@@ -451,6 +502,73 @@ def shared_report(token: str):
     return workflow.render_html(report, office, print_on_load=False)
 
 
+# ---------- 질문 검색 ----------
+
+@router.post("/search")
+def search(body: SearchIn, user: CurrentUser = Depends(current_user)):
+    """질문 하나로 매물·실거래가·법령·정책·사무소 자료·기사를 함께 찾아 답변 초안과 맞는 매물을 돌려준다."""
+    with tx() as conn:
+        result = _guard(hood.ask, conn, user, body.q, drop=body.drop, session_id=body.session_id)
+        record(conn, tenant_id=user.tenant_id, user_id=user.id, event="search.asked", entity="ai_session",
+               entity_id=result["session_id"],
+               payload={"generator": result["generator"], "listings": [l["id"] for l in result["listings"]],
+                        "sources": [s["id"] for s in result["sources"]], "gate": result["gate"]["status"]})
+    return result
+
+
+# ---------- Hood AI: 대화·설정·사용량·보고서 ----------
+
+@router.get("/ai/sessions")
+def ai_sessions(user: CurrentUser = Depends(current_user)):
+    with pool.connection() as conn:
+        return hood.list_sessions(conn, user)
+
+
+@router.get("/ai/sessions/{sid}")
+def ai_session(sid: int, user: CurrentUser = Depends(current_user)):
+    with pool.connection() as conn:
+        return _guard(hood.get_session, conn, user, sid)
+
+
+@router.delete("/ai/sessions/{sid}")
+def ai_session_delete(sid: int, user: CurrentUser = Depends(current_user)):
+    with tx() as conn:
+        _guard(hood.delete_session, conn, user, sid)
+    return {"deleted": sid}
+
+
+@router.get("/ai/settings")
+def ai_settings(user: CurrentUser = Depends(current_user)):
+    with pool.connection() as conn:
+        s = hood.get_settings(conn, user.tenant_id)
+        used = hood.month_count(conn, user.tenant_id)
+    return {**s, "month_used": used, "can_edit": user.role == "admin",
+            "llm": {"enabled": llm.is_enabled(), "model": llm.settings.llm_model if llm.is_enabled() else None}}
+
+
+@router.put("/ai/settings")
+def ai_settings_save(body: AISettingsIn, user: CurrentUser = Depends(require_admin)):
+    with tx() as conn:
+        s = _guard(hood.save_settings, conn, user, body.model_dump())
+        record(conn, tenant_id=user.tenant_id, user_id=user.id, event="ai.settings_saved", entity="tenant",
+               entity_id=user.tenant_id, payload=body.model_dump())
+    return s
+
+
+@router.get("/ai/usage")
+def ai_usage(days: int = 14, user: CurrentUser = Depends(current_user)):
+    with pool.connection() as conn:
+        return hood.usage(conn, user, days=max(7, min(days, 31)))
+
+
+@router.get("/reports")
+def list_reports(state: Literal["draft", "review", "done"] | None = None, user: CurrentUser = Depends(current_user)):
+    with pool.connection() as conn:
+        items = hood.list_reports(conn, user.tenant_id, state)
+        counts = hood.report_counts(conn, user.tenant_id)
+    return {"items": [{**r, "version": workflow.version_label(r["state"], r["version"])} for r in items], "counts": counts}
+
+
 # ---------- 자료실 ----------
 
 @router.get("/documents")
@@ -458,14 +576,51 @@ def list_documents(type: Literal["law", "policy", "office", "news"] | None = Non
     with pool.connection() as conn:
         rows = conn.execute(
             """SELECT d.id, d.source_type AS type, d.title, d.publisher AS org, d.published_at AS date, d.effective_date,
-                      d.region, (SELECT count(*) FROM chunks c WHERE c.document_id = d.id)::int AS chunks,
+                      d.region, d.created_by, u.name AS author,
+                      (SELECT count(*) FROM chunks c WHERE c.document_id = d.id)::int AS chunks,
                       (SELECT min(c.id) FROM chunks c WHERE c.document_id = d.id) AS first_chunk
-               FROM documents d WHERE (d.tenant_id IS NULL OR d.tenant_id = %s) AND (%s::text IS NULL OR d.source_type = %s)
+               FROM documents d LEFT JOIN users u ON u.id = d.created_by
+               WHERE (d.tenant_id IS NULL OR d.tenant_id = %s) AND (%s::text IS NULL OR d.source_type = %s)
                ORDER BY array_position(ARRAY['law','policy','office','news'], d.source_type), d.published_at DESC""",
             (user.tenant_id, type, type)).fetchall()
     return [{**r, "type_label": rag.TYPE_LABEL[r["type"]], "date": str(r["date"]),
              "effective_date": str(r["effective_date"]) if r["effective_date"] else None,
-             "first_chunk": f"c{r['first_chunk']}" if r["first_chunk"] else None} for r in rows]
+             "first_chunk": f"c{r['first_chunk']}" if r["first_chunk"] else None,
+             "mine": r["created_by"] == user.id} for r in rows]
+
+
+@router.post("/documents", status_code=201)
+def add_document(body: DocumentIn, user: CurrentUser = Depends(current_user)):
+    """중개사가 직접 적는 사무소 자료 (단지 정보, 현장 확인 내용, 사무소 안내). 우리 사무소에서만 검색된다."""
+    data = body.clean()
+    data["region"] = assistant.normalize_region(data["region"])  # 문서 지역 필터('서울 마포구' 접두 일치)와 같은 형태로
+    with tx() as conn:
+        doc_id, created = rag.ingest_document(
+            conn, tenant_id=user.tenant_id, source_type="office", title=data["title"],
+            publisher=f"{user.tenant_name} · {user.name}", published_at=date.today(), text=data["text"],
+            region=data["region"], license="사무소 내부 자료", created_by=user.id)
+        if not created:
+            raise HTTPException(409, "같은 내용의 자료가 이미 있습니다.")
+        record(conn, tenant_id=user.tenant_id, user_id=user.id, event="document.added", entity="document", entity_id=doc_id)
+        first = conn.execute("SELECT min(id) AS id, count(*)::int AS n FROM chunks WHERE document_id = %s", (doc_id,)).fetchone()
+    return {"id": doc_id, "first_chunk": f"c{first['id']}", "chunks": first["n"]}
+
+
+@router.delete("/documents/{doc_id}")
+def remove_document(doc_id: int, user: CurrentUser = Depends(current_user)):
+    """자기가 추가한 사무소 자료를 지운다 (관리자는 사무소 문서 전체)."""
+    with tx() as conn:
+        doc = conn.execute("SELECT id, created_by, raw_path FROM documents WHERE id = %s AND tenant_id = %s",
+                           (doc_id, user.tenant_id)).fetchone()
+        if not doc:
+            raise HTTPException(404, "이 사무소 자료가 아니거나 존재하지 않습니다.")
+        if doc["created_by"] != user.id and user.role != "admin":
+            raise HTTPException(403, "자료를 추가한 사람이나 관리자만 지울 수 있습니다.")
+        conn.execute("DELETE FROM documents WHERE id = %s", (doc_id,))
+        record(conn, tenant_id=user.tenant_id, user_id=user.id, event="document.deleted", entity="document", entity_id=doc_id)
+    if doc["raw_path"]:
+        Path(doc["raw_path"]).unlink(missing_ok=True)
+    return {"deleted": doc_id}
 
 
 @router.get("/evidence/search")

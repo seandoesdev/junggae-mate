@@ -18,7 +18,8 @@ POLICY_KEYWORDS = ("정책", "지원", "대출", "규제", "세금", "취득세"
 def ingest_document(conn, *, tenant_id: int | None, source_type: str, title: str, publisher: str,
                     published_at: date | str, text: str, effective_date: date | str | None = None,
                     region: str | None = None, url: str | None = None, license: str | None = None,
-                    facts: dict | None = None, raw: bytes | None = None, ext: str = "txt") -> tuple[int, bool]:
+                    facts: dict | None = None, raw: bytes | None = None, ext: str = "txt",
+                    created_by: int | None = None) -> tuple[int, bool]:
     """문서를 저장하고 청크를 인덱싱한다. 같은 내용이 이미 있으면 (기존 id, False)."""
     if source_type not in AUTHORITY:
         raise ValueError(f"지원하지 않는 문서 유형: {source_type}")
@@ -42,10 +43,10 @@ def ingest_document(conn, *, tenant_id: int | None, source_type: str, title: str
 
     doc = conn.execute(
         """INSERT INTO documents (tenant_id, source_type, title, publisher, url, published_at, effective_date,
-                                  region, license, facts, content_hash, raw_path, embed_model)
-           VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING id""",
+                                  region, license, facts, content_hash, raw_path, embed_model, created_by)
+           VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING id""",
         (tenant_id, source_type, title, publisher, url, published_at, effective_date, region, license,
-         Jsonb(facts or {}), content_hash, raw_path, EMBED_MODEL),
+         Jsonb(facts or {}), content_hash, raw_path, EMBED_MODEL, created_by),
     ).fetchone()
     for i, chunk in enumerate(chunk_document(text, source_type)):
         conn.execute(
