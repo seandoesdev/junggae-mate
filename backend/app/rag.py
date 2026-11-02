@@ -9,8 +9,7 @@ from .db import Jsonb, vec_literal
 from .embedding import EMBED_MODEL, embed
 
 AUTHORITY = {"law": 1, "policy": 2, "office": 3, "news": 4}
-TYPE_LABEL = {"law": "현행 법령", "policy": "공식 정책", "office": "사무소 문서", "news": "허용 뉴스"}
-VERIFIED_BADGE = {"law": "법령 근거", "policy": "공식 근거", "office": "사무소 문서"}
+TYPE_LABEL = {"law": "법령", "policy": "정책", "office": "사무소", "news": "기사", "data": "데이터"}
 POLICY_KEYWORDS = ("정책", "지원", "대출", "규제", "세금", "취득세", "법", "시행", "적용", "요건", "대상", "신고", "의무")
 
 
@@ -101,24 +100,25 @@ def search(conn, tenant_id: int, query: str, *, region: str | None = None, as_of
     return out
 
 
-def to_evidence(hit: dict, state: str = "verified", badge: str | None = None) -> dict[str, Any]:
+def to_evidence(hit: dict) -> dict[str, Any]:
+    """문서 조각 → 화면에 보여 줄 출처 하나 (docs/API.md evidence)."""
     st = hit["source_type"]
     return {
-        "chunk_id": f"c{hit['id']}",
-        "document_id": hit["document_id"],
-        "title": hit["title"],
-        "publisher": hit["publisher"],
-        "source_type": st,
+        "id": f"c{hit['id']}",
+        "kind": "chunk",
+        "type": st,
         "type_label": TYPE_LABEL[st],
-        "authority": AUTHORITY[st],
+        "title": hit["title"],
+        "org": hit["publisher"],
         "date": str(hit["published_at"]),
         "effective_date": str(hit["effective_date"]) if hit.get("effective_date") else None,
         "location": hit["location"],
         "snippet": hit["text"],
         "url": hit.get("url"),
+        "document_id": hit["document_id"],
         "score": hit.get("score"),
-        "state": state,
-        "badge": badge or VERIFIED_BADGE.get(st, "근거 확인"),
+        "state": "warning" if st == "news" else "ok",
+        "note": "기사는 시장 상황을 설명하는 보조 자료입니다. 정책 적용 여부의 근거로 쓰지 않습니다." if st == "news" else None,
     }
 
 
@@ -149,11 +149,6 @@ def evidence_gate(hits: list[dict], *, as_of: date, policy_question: bool) -> di
         messages.append("법령·공식 정책 원문 근거가 없습니다. 뉴스나 사무소 문서만으로 정책 적용 여부를 단정하지 않습니다.")
         findings.append({"kind": "insufficient", "citations": []})
 
-    for h in hits:
-        if h["source_type"] == "news":
-            ev = evidence[f"c{h['id']}"]
-            ev.update(state="warning", badge="보조 자료")
-
     # 같은 사실 키에 서로 다른 값이 있으면 충돌. 권위가 높은 자료를 기준값으로 삼는다.
     by_key: dict[str, list[tuple[dict, dict]]] = {}
     for h in hits:
@@ -169,7 +164,8 @@ def evidence_gate(hits: list[dict], *, as_of: date, policy_question: bool) -> di
             if str(fact["value"]) == str(ref_fact["value"]):
                 continue
             status = "conflict" if status == "ok" else status
-            evidence[f"c{h['id']}"].update(state="conflict", badge="자료 불일치")
+            evidence[f"c{h['id']}"].update(state="conflict",
+                                           note=f"{ref_fact.get('label', key)}이(가) 공식 자료({ref_fact['value']})와 다르게 적혀 있습니다 ({fact['value']}).")
             label = ref_fact.get("label", key)
             messages.append(
                 f"자료 간 불일치 · {label}: {ref_hit['title']}({TYPE_LABEL[ref_hit['source_type']]})는 {ref_fact['value']}, "
@@ -188,7 +184,7 @@ def evidence_gate(hits: list[dict], *, as_of: date, policy_question: bool) -> di
     for eff, group in sorted(pending.items()):
         seen_docs, cites, titles = set(), [], []
         for h in group:
-            evidence[f"c{h['id']}"].update(state="warning", badge="시행 전")
+            evidence[f"c{h['id']}"].update(state="warning", note=f"{eff} 시행 예정. 기준일({as_of}) 현재 시행 전입니다.")
             if h["document_id"] not in seen_docs:
                 seen_docs.add(h["document_id"])
                 cites.append(f"c{h['id']}")

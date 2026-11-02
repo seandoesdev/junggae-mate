@@ -1,40 +1,38 @@
-import html
+"""REST API (docs/API.md v0.3). tenant는 토큰의 사용자 레코드에서만 정해진다."""
 from datetime import date
+from pathlib import Path
 from typing import Literal
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
 
-from . import drafting, llm, public_data, rag
+from . import drafting, llm, public_data, rag, workflow
 from .audit import record
 from .db import fetch_one, pool, tx
 from .security import CurrentUser, create_token, current_user, require_admin, verify_password
 
 router = APIRouter(prefix="/api")
+public = APIRouter()
 
 
-# ---------- 스키마 ----------
+# ---------- 입력 ----------
 
 class LoginIn(BaseModel):
     email: str
     password: str
 
 
-class Conditions(BaseModel):
-    budget_max: int | None = Field(None, ge=0, description="만원")
-    area_min: float | None = Field(None, ge=0)
-    district: str | None = None
-    station_walk_max: int | None = Field(None, ge=0)
-    preferences: list[str] = []
+class _Clean(BaseModel):
+    def clean(self) -> dict:
+        data = self.model_dump()
+        for k, v in data.items():
+            if isinstance(v, str):
+                data[k] = v.strip() or None
+        return data
 
 
-class CandidateIn(BaseModel):
-    status: Literal["interest", "excluded", "compare", "none"]
-    reason: str | None = None
-
-
-class ListingIn(BaseModel):
+class ListingIn(_Clean):
     title: str = Field(..., min_length=1, max_length=100)
     complex_name: str = Field(..., min_length=1, max_length=100)
     address: str = Field(..., min_length=2, max_length=200)
@@ -49,33 +47,58 @@ class ListingIn(BaseModel):
     park_walk_min: int | None = Field(None, ge=0, le=180)
     description: str | None = Field(None, max_length=2000)
 
+
+class CustomerIn(_Clean):
+    name: str = Field(..., min_length=1, max_length=50)
+    deal_type: str = Field("매수", max_length=20)
+    phone: str | None = Field(None, max_length=30)
+    budget_max: int | None = Field(None, ge=0, description="만원")
+    area_min: float | None = Field(None, ge=0)
+    district: str | None = Field(None, max_length=30)
+    station_walk_max: int | None = Field(None, ge=0, le=180)
+    preferences: list[str] = []
+    first_home: bool = False
+
     def clean(self) -> dict:
-        data = self.model_dump()
-        for k, v in data.items():
-            if isinstance(v, str):
-                data[k] = v.strip() or None
+        data = super().clean()
+        data["preferences"] = [p.strip() for p in self.preferences if p.strip()]
+        data["deal_type"] = data["deal_type"] or "매수"
         return data
 
 
-class CompareIn(BaseModel):
-    consultation_id: int
-    listing_ids: list[int] = Field(..., min_length=1, max_length=5)
+class CheckIn(BaseModel):
+    checked: bool
 
 
-class AskIn(BaseModel):
-    consultation_id: int
-    question: str = Field(..., min_length=2, max_length=1000)
-    as_of: date | None = None
+class ActivityIn(BaseModel):
+    text: str = Field(..., min_length=1, max_length=1000)
 
 
-class AdviseIn(BaseModel):
-    consultation_id: int
+class DealIn(BaseModel):
+    listing_id: int
+    customer_id: int
+    next_action: str | None = Field(None, max_length=200)
+
+
+class StageIn(BaseModel):
+    stage: Literal["intro", "visit", "nego", "contract", "done", "dropped"]
+    reason: str | None = Field(None, max_length=200)
+
+
+class DealEditIn(BaseModel):
+    next_action: str | None = Field(None, max_length=200)
+
+
+class ReportIn(BaseModel):
+    kind: Literal["compare", "answer"]
     listing_ids: list[int] | None = None
+    question: str | None = Field(None, max_length=1000)
+    quote_id: str | None = Field(None, max_length=20)
 
 
-class DraftEditIn(BaseModel):
-    text: str = Field(..., min_length=1, max_length=20000)
-    note: str | None = None
+class ReportEditIn(BaseModel):
+    opinion: str = Field(..., min_length=1, max_length=20000)
+    to_check: list[str] | None = None
 
 
 class ApproveIn(BaseModel):
@@ -89,52 +112,73 @@ class TradeCollectIn(BaseModel):
 
 # ---------- 공통 ----------
 
-def _consultation_row(conn, tenant_id: int, cid: int) -> dict:
-    row = conn.execute(
-        """SELECT id, customer_name, deal_type, created_at, budget_max, area_min::float AS area_min, district,
-                  station_walk_max, preferences FROM consultations WHERE id = %s AND tenant_id = %s""",
-        (cid, tenant_id),
-    ).fetchone()
-    if not row:
-        raise HTTPException(404, "상담을 찾을 수 없습니다.")  # 다른 사무소 상담의 존재 여부도 노출하지 않음
-    return row
+def _guard(fn, *args, **kwargs):
+    """업무 오류를 HTTP 오류로 바꾼다."""
+    try:
+        return fn(*args, **kwargs)
+    except drafting.DomainError as e:
+        raise HTTPException(e.status, str(e))
+    except workflow.Forbidden as e:
+        raise HTTPException(403, str(e))
+    except llm.LLMUnavailable as e:
+        raise HTTPException(503, f"문서 초안을 만들지 못했습니다({e}). 매물·고객·거래 기능은 계속 쓸 수 있습니다.")
 
 
-def _conditions(row: dict) -> dict:
-    return {k: row[k] for k in ("budget_max", "area_min", "district", "station_walk_max", "preferences")}
+def _listing(conn, user: CurrentUser, listing_id: int, include_closed: bool = False) -> dict:
+    found = drafting.fetch_listings(conn, user.tenant_id, ids=[listing_id], user_id=user.id, include_closed=include_closed)
+    if not found:
+        raise HTTPException(404, "매물을 찾을 수 없습니다.")
+    return found[0]
 
 
-def _consultation_detail(conn, tenant_id: int, cid: int) -> dict:
-    row = _consultation_row(conn, tenant_id, cid)
-    cands = conn.execute("SELECT listing_id, status, reason FROM consultation_candidates WHERE consultation_id = %s",
-                         (cid,)).fetchall()
-    listings = {l["id"]: l for l in drafting.fetch_listings(conn, tenant_id, ids=[c["listing_id"] for c in cands])} if cands else {}
-    logs = conn.execute("SELECT note, at FROM consultation_logs WHERE consultation_id = %s ORDER BY at DESC", (cid,)).fetchall()
-    return {
-        "id": row["id"], "customer_name": row["customer_name"], "deal_type": row["deal_type"],
-        "created_at": row["created_at"].isoformat(), "conditions": _conditions(row),
-        "candidates": [{**c, "listing": listings.get(c["listing_id"])} for c in cands],
-        "history": [{"at": l["at"].isoformat(), "note": l["note"]} for l in logs],
-    }
+def _own_listing(user: CurrentUser, listing: dict):
+    if not (listing["mine"] or user.role == "admin"):
+        raise HTTPException(403, "담당 중개사나 관리자만 매물을 바꿀 수 있습니다.")
 
 
-def _draft_or_404(conn, user: CurrentUser, draft_id: int) -> dict:
-    d = drafting.load_draft(conn, user.tenant_id, draft_id)
+_CUSTOMER_SQL = f"""
+SELECT c.id, c.name, c.deal_type, c.phone, c.agent_id, u.name AS agent_name, c.budget_max, c.area_min::float AS area_min,
+       c.district, c.station_walk_max, c.preferences, c.first_home, c.created_at,
+       (SELECT d.stage FROM deals d WHERE d.customer_id = c.id AND d.stage <> 'dropped'
+        ORDER BY {drafting.STAGE_ORDER_SQL} DESC LIMIT 1) AS top_stage,
+       (SELECT count(*) FROM deals d WHERE d.customer_id = c.id AND d.stage <> 'dropped')::int AS active_deals
+FROM customers c JOIN users u ON u.id = c.agent_id
+WHERE c.tenant_id = %(tenant)s {{where}}
+ORDER BY c.created_at DESC, c.id DESC"""
+
+
+def _customers(conn, tenant_id: int, **filters) -> list[dict]:
+    where, params = [], {"tenant": tenant_id}
+    for col, val in filters.items():
+        if val is not None:
+            where.append(f"AND c.{col} = %({col})s")
+            params[col] = val
+    rows = conn.execute(_CUSTOMER_SQL.format(where=" ".join(where)), params).fetchall()
+    return [{**r, "created_at": r["created_at"].isoformat()} for r in rows]
+
+
+def _customer(conn, user: CurrentUser, cid: int) -> dict:
+    found = _customers(conn, user.tenant_id, id=cid)
+    if not found:
+        raise HTTPException(404, "고객을 찾을 수 없습니다.")  # 다른 사무소 고객의 존재 여부도 알리지 않는다
+    return found[0]
+
+
+def _deal(conn, user: CurrentUser, deal_id: int) -> dict:
+    d = workflow.get_deal(conn, user.tenant_id, deal_id)
     if not d:
-        raise HTTPException(404, "초안을 찾을 수 없습니다.")
+        raise HTTPException(404, "거래를 찾을 수 없습니다.")
     return d
 
 
-def _domain(fn, *args):
-    try:
-        return fn(*args)
-    except drafting.DomainError as e:
-        raise HTTPException(e.status, str(e))
-    except llm.LLMUnavailable as e:
-        raise HTTPException(503, f"AI 초안 생성이 일시 중단되었습니다: {e}. 매물 비교와 근거 목록은 계속 사용할 수 있습니다.")
+def _report(conn, user: CurrentUser, report_id: int, request: Request) -> dict:
+    r = workflow.load_report(conn, user.tenant_id, report_id, base_url=str(request.base_url).rstrip("/"))
+    if not r:
+        raise HTTPException(404, "고객 자료를 찾을 수 없습니다.")
+    return r
 
 
-# ---------- 인증 ----------
+# ---------- 인증·사무소 ----------
 
 @router.post("/auth/login")
 def login(body: LoginIn):
@@ -156,123 +200,60 @@ def me(user: CurrentUser = Depends(current_user)):
     return user.public()
 
 
-# ---------- 상담 ----------
-
-@router.get("/consultations")
-def list_consultations(user: CurrentUser = Depends(current_user)):
+@router.get("/agents")
+def agents(user: CurrentUser = Depends(current_user)):
     with pool.connection() as conn:
-        rows = conn.execute(
-            """SELECT c.id, c.customer_name, c.deal_type, c.created_at, c.budget_max, c.area_min::float AS area_min,
-                      c.district, c.station_walk_max, c.preferences,
-                      (SELECT count(*) FROM consultation_candidates x WHERE x.consultation_id = c.id AND x.status = 'interest') AS interest,
-                      (SELECT count(*) FROM consultation_candidates x WHERE x.consultation_id = c.id AND x.status = 'excluded') AS excluded,
-                      (SELECT count(*) FROM consultation_logs x WHERE x.consultation_id = c.id) AS history
-               FROM consultations c WHERE c.tenant_id = %s ORDER BY c.created_at DESC""",
-            (user.tenant_id,),
-        ).fetchall()
-    return [{"id": r["id"], "customer_name": r["customer_name"], "deal_type": r["deal_type"],
-             "created_at": r["created_at"].isoformat(), "conditions": _conditions(r),
-             "counts": {"interest": r["interest"], "excluded": r["excluded"], "history": r["history"]}} for r in rows]
+        return conn.execute("SELECT id, name, role FROM users WHERE tenant_id = %s ORDER BY role DESC, id", (user.tenant_id,)).fetchall()
 
 
-@router.get("/consultations/{cid}")
-def get_consultation(cid: int, user: CurrentUser = Depends(current_user)):
-    with pool.connection() as conn:
-        return _consultation_detail(conn, user.tenant_id, cid)
-
-
-@router.put("/consultations/{cid}/conditions")
-def update_conditions(cid: int, body: Conditions, user: CurrentUser = Depends(current_user)):
-    prefs = [p.strip() for p in body.preferences if p.strip()]
-    with tx() as conn:
-        _consultation_row(conn, user.tenant_id, cid)
-        conn.execute(
-            """UPDATE consultations SET budget_max=%s, area_min=%s, district=%s, station_walk_max=%s, preferences=%s
-               WHERE id=%s AND tenant_id=%s""",
-            (body.budget_max, body.area_min, body.district or None, body.station_walk_max, prefs, cid, user.tenant_id),
-        )
-        conn.execute("INSERT INTO consultation_logs (consultation_id, note) VALUES (%s, %s)", (cid, "고객 조건 수정"))
-        record(conn, tenant_id=user.tenant_id, user_id=user.id, event="consultation.conditions_updated",
-               entity="consultation", entity_id=cid)
-        cond = {**body.model_dump(), "preferences": prefs}
-        warnings = drafting.condition_warnings(conn, user.tenant_id, cond)
-        return {"consultation": _consultation_detail(conn, user.tenant_id, cid), "warnings": warnings}
-
-
-@router.put("/consultations/{cid}/candidates/{listing_id}")
-def set_candidate(cid: int, listing_id: int, body: CandidateIn, user: CurrentUser = Depends(current_user)):
-    with tx() as conn:
-        _consultation_row(conn, user.tenant_id, cid)
-        if not drafting.fetch_listings(conn, user.tenant_id, ids=[listing_id]):
-            raise HTTPException(404, "매물을 찾을 수 없습니다.")
-        if body.status == "none":
-            conn.execute("DELETE FROM consultation_candidates WHERE consultation_id=%s AND listing_id=%s", (cid, listing_id))
-        else:
-            conn.execute(
-                """INSERT INTO consultation_candidates (consultation_id, listing_id, status, reason) VALUES (%s,%s,%s,%s)
-                   ON CONFLICT (consultation_id, listing_id) DO UPDATE SET status = EXCLUDED.status, reason = EXCLUDED.reason""",
-                (cid, listing_id, body.status, body.reason),
-            )
-        record(conn, tenant_id=user.tenant_id, user_id=user.id, event="consultation.candidate_set",
-               entity="consultation", entity_id=cid, payload={"listing_id": listing_id, "status": body.status})
-        return _consultation_detail(conn, user.tenant_id, cid)
-
-
-# ---------- 매물·비교 ----------
+# ---------- 매물 ----------
 
 @router.get("/listings")
-def list_listings(district: str | None = None, max_price: int | None = None, min_area: float | None = None,
-                  max_station_walk: int | None = None, sort: Literal["price", "recent"] = "price",
-                  mine: bool = False, user: CurrentUser = Depends(current_user)):
+def list_listings(mine: bool = False, sort: Literal["price", "recent"] = "price", district: str | None = None,
+                  max_price: int | None = None, min_area: float | None = None, user: CurrentUser = Depends(current_user)):
     with pool.connection() as conn:
         items = drafting.fetch_listings(conn, user.tenant_id, district=district or None, max_price=max_price,
-                                        min_area=min_area, max_station_walk=max_station_walk, sort=sort,
-                                        user_id=user.id, mine=mine)
-    as_of = max((i["source_date"] for i in items), default=None)
-    return {"items": items, "total": len(items), "as_of": as_of}
-
-
-def _listing_or_404(conn, user: CurrentUser, listing_id: int, include_closed: bool = False) -> dict:
-    found = drafting.fetch_listings(conn, user.tenant_id, ids=[listing_id], user_id=user.id, include_closed=include_closed)
-    if not found:
-        raise HTTPException(404, "매물을 찾을 수 없습니다.")
-    return found[0]
+                                        min_area=min_area, sort=sort, user_id=user.id, mine=mine)
+    return {"items": items, "total": len(items)}
 
 
 @router.get("/listings/{listing_id}")
 def get_listing(listing_id: int, user: CurrentUser = Depends(current_user)):
     with pool.connection() as conn:
-        listing = _listing_or_404(conn, user, listing_id)
-        candidates = conn.execute(
-            """SELECT c.id AS consultation_id, c.customer_name, x.status, x.reason
-               FROM consultation_candidates x JOIN consultations c ON c.id = x.consultation_id
-               WHERE x.listing_id = %s AND c.tenant_id = %s ORDER BY c.id""",
-            (listing_id, user.tenant_id),
-        ).fetchall()
-        return {"listing": listing, "trade_reference": drafting.trade_reference(conn, listing), "candidates": candidates}
+        listing = _listing(conn, user, listing_id)
+        return {"listing": listing, "trade_reference": drafting.trade_reference(conn, listing),
+                "deals": workflow.list_deals(conn, user.tenant_id, listing_id=listing_id),
+                "checks": workflow.listing_checks(conn, user, listing)}
+
+
+@router.put("/listings/{listing_id}/checks/{key}")
+def set_check(listing_id: int, key: str, body: CheckIn, user: CurrentUser = Depends(current_user)):
+    with tx() as conn:
+        return _guard(workflow.set_check, conn, user, _listing(conn, user, listing_id), key, body.checked)
 
 
 @router.post("/listings", status_code=201)
 def create_listing(body: ListingIn, user: CurrentUser = Depends(current_user)):
     with tx() as conn:
         row = conn.execute(
-            """INSERT INTO listings (tenant_id, label, title, complex_name, address, district, price, area_m2, floor, station,
-                                     station_walk_min, park_walk_min, lat, lng, description, source, source_date, registered_by)
-               VALUES (%(tenant)s, %(label)s, %(title)s, %(complex_name)s, %(address)s, %(district)s, %(price)s, %(area_m2)s,
-                       %(floor)s, %(station)s, %(station_walk_min)s, %(park_walk_min)s, %(lat)s, %(lng)s, %(description)s,
-                       '중개사 직접 등록', current_date, %(user)s) RETURNING id""",
-            {**body.clean(), "tenant": user.tenant_id, "label": drafting.next_label(conn, user.tenant_id), "user": user.id},
+            """INSERT INTO listings (tenant_id, agent_id, label, title, complex_name, address, district, price, area_m2, floor,
+                                     station, station_walk_min, park_walk_min, lat, lng, description, source, source_date)
+               VALUES (%(tenant)s, %(user)s, %(label)s, %(title)s, %(complex_name)s, %(address)s, %(district)s, %(price)s,
+                       %(area_m2)s, %(floor)s, %(station)s, %(station_walk_min)s, %(park_walk_min)s, %(lat)s, %(lng)s,
+                       %(description)s, '중개사 직접 등록', current_date) RETURNING id""",
+            {**body.clean(), "tenant": user.tenant_id, "user": user.id, "label": drafting.next_label(conn, user.tenant_id)},
         ).fetchone()
         conn.execute("INSERT INTO listing_price_history (listing_id, price, changed_at) VALUES (%s, %s, current_date)",
                      (row["id"], body.price))
         record(conn, tenant_id=user.tenant_id, user_id=user.id, event="listing.created", entity="listing", entity_id=row["id"])
-        return _listing_or_404(conn, user, row["id"])
+        return _listing(conn, user, row["id"])
 
 
 @router.put("/listings/{listing_id}")
 def update_listing(listing_id: int, body: ListingIn, user: CurrentUser = Depends(current_user)):
     with tx() as conn:
-        before = _listing_or_404(conn, user, listing_id)
+        before = _listing(conn, user, listing_id)
+        _own_listing(user, before)
         conn.execute(
             """UPDATE listings SET title=%(title)s, complex_name=%(complex_name)s, address=%(address)s, district=%(district)s,
                       price=%(price)s, area_m2=%(area_m2)s, floor=%(floor)s, station=%(station)s,
@@ -286,162 +267,227 @@ def update_listing(listing_id: int, body: ListingIn, user: CurrentUser = Depends
                          (listing_id, body.price))
         record(conn, tenant_id=user.tenant_id, user_id=user.id, event="listing.updated", entity="listing", entity_id=listing_id,
                payload={"price_changed": body.price != before["price"]})
-        return _listing_or_404(conn, user, listing_id)
+        return _listing(conn, user, listing_id)
 
 
 @router.post("/listings/{listing_id}/close")
 def close_listing(listing_id: int, user: CurrentUser = Depends(current_user)):
     with tx() as conn:
-        _listing_or_404(conn, user, listing_id)
+        _own_listing(user, _listing(conn, user, listing_id))
         conn.execute("UPDATE listings SET status = 'closed' WHERE id = %s AND tenant_id = %s", (listing_id, user.tenant_id))
         record(conn, tenant_id=user.tenant_id, user_id=user.id, event="listing.closed", entity="listing", entity_id=listing_id)
-        return _listing_or_404(conn, user, listing_id, include_closed=True)
+        return _listing(conn, user, listing_id, include_closed=True)
 
 
-@router.post("/compare")
-def compare(body: CompareIn, user: CurrentUser = Depends(current_user)):
+# ---------- 고객 ----------
+
+@router.get("/customers")
+def list_customers(mine: bool = False, user: CurrentUser = Depends(current_user)):
     with pool.connection() as conn:
-        cond = _conditions(_consultation_row(conn, user.tenant_id, body.consultation_id))
-        listings = drafting.fetch_listings(conn, user.tenant_id, ids=body.listing_ids)
-        if len(listings) != len(set(body.listing_ids)):
-            raise HTTPException(404, "선택한 매물 중 조회할 수 없는 항목이 있습니다.")
-        order = {lid: i for i, lid in enumerate(body.listing_ids)}
-        listings.sort(key=lambda l: order[l["id"]])
-        return {"rows": [{"listing": l, "checks": drafting.condition_checks(l, cond),
-                          "trade_reference": drafting.trade_reference(conn, l)} for l in listings]}
+        return _customers(conn, user.tenant_id, agent_id=user.id if mine else None)
 
 
-# ---------- 근거 검색 ----------
+@router.get("/customers/{cid}")
+def get_customer(cid: int, user: CurrentUser = Depends(current_user)):
+    with pool.connection() as conn:
+        customer = _customer(conn, user, cid)
+        reports = conn.execute(
+            "SELECT id, kind, title, state, version, created_at FROM reports WHERE customer_id = %s ORDER BY created_at DESC", (cid,)).fetchall()
+        acts = conn.execute(
+            """SELECT a.at, a.text, u.name AS user_name FROM activities a LEFT JOIN users u ON u.id = a.user_id
+               WHERE a.customer_id = %s ORDER BY a.at DESC, a.id DESC LIMIT 100""", (cid,)).fetchall()
+        return {
+            "customer": customer,
+            "deals": workflow.list_deals(conn, user.tenant_id, customer_id=cid),
+            "reports": [{**r, "version": workflow.version_label(r["state"], r["version"]), "created_at": r["created_at"].isoformat()}
+                        for r in reports],
+            "activities": [{**a, "at": a["at"].isoformat()} for a in acts],
+        }
+
+
+@router.post("/customers", status_code=201)
+def create_customer(body: CustomerIn, user: CurrentUser = Depends(current_user)):
+    with tx() as conn:
+        row = conn.execute(
+            """INSERT INTO customers (tenant_id, agent_id, name, deal_type, phone, budget_max, area_min, district,
+                                      station_walk_max, preferences, first_home)
+               VALUES (%(tenant)s, %(user)s, %(name)s, %(deal_type)s, %(phone)s, %(budget_max)s, %(area_min)s, %(district)s,
+                       %(station_walk_max)s, %(preferences)s, %(first_home)s) RETURNING id""",
+            {**body.clean(), "tenant": user.tenant_id, "user": user.id}).fetchone()
+        workflow.log_activity(conn, row["id"], user.id, "고객 등록")
+        record(conn, tenant_id=user.tenant_id, user_id=user.id, event="customer.created", entity="customer", entity_id=row["id"])
+        return _customer(conn, user, row["id"])
+
+
+@router.put("/customers/{cid}")
+def update_customer(cid: int, body: CustomerIn, user: CurrentUser = Depends(current_user)):
+    with tx() as conn:
+        _customer(conn, user, cid)
+        data = body.clean()
+        conn.execute(
+            """UPDATE customers SET name=%(name)s, deal_type=%(deal_type)s, phone=%(phone)s, budget_max=%(budget_max)s,
+                      area_min=%(area_min)s, district=%(district)s, station_walk_max=%(station_walk_max)s,
+                      preferences=%(preferences)s, first_home=%(first_home)s WHERE id=%(id)s AND tenant_id=%(tenant)s""",
+            {**data, "id": cid, "tenant": user.tenant_id})
+        workflow.log_activity(conn, cid, user.id, "찾는 조건 수정")
+        record(conn, tenant_id=user.tenant_id, user_id=user.id, event="customer.updated", entity="customer", entity_id=cid)
+        return {"customer": _customer(conn, user, cid), "warnings": drafting.condition_warnings(conn, user.tenant_id, data)}
+
+
+@router.post("/customers/{cid}/activities", status_code=201)
+def add_activity(cid: int, body: ActivityIn, user: CurrentUser = Depends(current_user)):
+    with tx() as conn:
+        _customer(conn, user, cid)
+        row = conn.execute("INSERT INTO activities (customer_id, user_id, text) VALUES (%s, %s, %s) RETURNING at, text",
+                           (cid, user.id, body.text.strip())).fetchone()
+        return {"at": row["at"].isoformat(), "text": row["text"], "user_name": user.name}
+
+
+@router.get("/customers/{cid}/matches")
+def customer_matches(cid: int, user: CurrentUser = Depends(current_user)):
+    with pool.connection() as conn:
+        c = _customer(conn, user, cid)
+        return {"items": [l for l in drafting.fetch_listings(conn, user.tenant_id, user_id=user.id) if drafting.matches(l, c)]}
+
+
+# ---------- 거래 ----------
+
+@router.get("/deals")
+def list_deals(mine: bool = False, user: CurrentUser = Depends(current_user)):
+    with pool.connection() as conn:
+        return workflow.list_deals(conn, user.tenant_id, agent_id=user.id if mine else None)
+
+
+@router.post("/deals", status_code=201)
+def create_deal(body: DealIn, user: CurrentUser = Depends(current_user)):
+    with tx() as conn:
+        listing = _listing(conn, user, body.listing_id)
+        customer = _customer(conn, user, body.customer_id)
+        return _guard(workflow.create_deal, conn, user, listing, customer, body.next_action)
+
+
+@router.post("/deals/{deal_id}/stage")
+def change_stage(deal_id: int, body: StageIn, user: CurrentUser = Depends(current_user)):
+    with tx() as conn:
+        deal, warnings = _guard(workflow.change_stage, conn, user, _deal(conn, user, deal_id), body.stage, body.reason)
+        return {"deal": deal, "warnings": warnings}
+
+
+@router.put("/deals/{deal_id}")
+def edit_deal(deal_id: int, body: DealEditIn, user: CurrentUser = Depends(current_user)):
+    with tx() as conn:
+        deal = _deal(conn, user, deal_id)
+        if not workflow.can_change_deal(user, deal):
+            raise HTTPException(403, "거래 담당·매물 담당 중개사나 관리자만 고칠 수 있습니다.")
+        conn.execute("UPDATE deals SET next_action = %s WHERE id = %s", ((body.next_action or "").strip() or None, deal_id))
+        return _deal(conn, user, deal_id)
+
+
+# ---------- 고객 자료 ----------
+
+@router.post("/customers/{cid}/reports", status_code=201)
+def create_report(cid: int, body: ReportIn, request: Request, user: CurrentUser = Depends(current_user)):
+    with tx() as conn:
+        customer = _customer(conn, user, cid)
+        rid = _guard(workflow.create_report, conn, user, customer, body.kind,
+                     listing_ids=body.listing_ids, question=body.question, quote_id=body.quote_id)
+        return _report(conn, user, rid, request)
+
+
+@router.get("/reports/{rid}")
+def get_report(rid: int, request: Request, user: CurrentUser = Depends(current_user)):
+    with pool.connection() as conn:
+        return _report(conn, user, rid, request)
+
+
+@router.put("/reports/{rid}")
+def edit_report(rid: int, body: ReportEditIn, request: Request, user: CurrentUser = Depends(current_user)):
+    with tx() as conn:
+        _guard(workflow.edit_report, conn, user, _report(conn, user, rid, request), body.opinion, body.to_check)
+        return _report(conn, user, rid, request)
+
+
+@router.post("/reports/{rid}/review")
+def review_report(rid: int, request: Request, user: CurrentUser = Depends(current_user)):
+    with tx() as conn:
+        _guard(workflow.request_review, conn, user, _report(conn, user, rid, request))
+        return _report(conn, user, rid, request)
+
+
+@router.post("/reports/{rid}/approve")
+def approve_report(rid: int, body: ApproveIn, request: Request, user: CurrentUser = Depends(current_user)):
+    if not body.confirm:
+        raise HTTPException(400, "출처·기준일·확인할 사항을 확인했다는 표시가 필요합니다.")
+    with tx() as conn:
+        _guard(workflow.approve, conn, user, _report(conn, user, rid, request))
+        return _report(conn, user, rid, request)
+
+
+@router.post("/reports/{rid}/share")
+def share_report(rid: int, request: Request, user: CurrentUser = Depends(current_user)):
+    with tx() as conn:
+        _guard(workflow.share, conn, user, _report(conn, user, rid, request))
+        return _report(conn, user, rid, request)
+
+
+@router.get("/reports/{rid}/export", response_class=HTMLResponse)
+def export_report(rid: int, request: Request, user: CurrentUser = Depends(current_user)):
+    with tx() as conn:
+        r = _report(conn, user, rid, request)
+        if r["state"] not in ("approved", "shared"):
+            raise HTTPException(409, "승인한 자료만 인쇄할 수 있습니다.")
+        workflow.log_activity(conn, r["customer_id"], user.id, f"{r['title']} 인쇄·PDF 저장")
+        record(conn, tenant_id=user.tenant_id, user_id=user.id, event="report.exported", entity="report", entity_id=rid)
+    return workflow.render_html(r, user.tenant_name, print_on_load=True)
+
+
+@public.get("/r/{token}", response_class=HTMLResponse, include_in_schema=False)
+def shared_report(token: str):
+    with tx() as conn:
+        found = workflow.open_shared(conn, token)
+    if not found:
+        raise HTTPException(404, "링크가 만료되었거나 없는 자료입니다.")
+    report, office = found
+    return workflow.render_html(report, office, print_on_load=False)
+
+
+# ---------- 자료실 ----------
+
+@router.get("/documents")
+def list_documents(type: Literal["law", "policy", "office", "news"] | None = None, user: CurrentUser = Depends(current_user)):
+    with pool.connection() as conn:
+        rows = conn.execute(
+            """SELECT d.id, d.source_type AS type, d.title, d.publisher AS org, d.published_at AS date, d.effective_date,
+                      d.region, (SELECT count(*) FROM chunks c WHERE c.document_id = d.id)::int AS chunks,
+                      (SELECT min(c.id) FROM chunks c WHERE c.document_id = d.id) AS first_chunk
+               FROM documents d WHERE (d.tenant_id IS NULL OR d.tenant_id = %s) AND (%s::text IS NULL OR d.source_type = %s)
+               ORDER BY array_position(ARRAY['law','policy','office','news'], d.source_type), d.published_at DESC""",
+            (user.tenant_id, type, type)).fetchall()
+    return [{**r, "type_label": rag.TYPE_LABEL[r["type"]], "date": str(r["date"]),
+             "effective_date": str(r["effective_date"]) if r["effective_date"] else None,
+             "first_chunk": f"c{r['first_chunk']}" if r["first_chunk"] else None} for r in rows]
+
 
 @router.get("/evidence/search")
-def evidence_search(q: str = Query(..., min_length=1), region: str | None = None,
+def evidence_search(q: str, type: Literal["law", "policy", "office", "news"] | None = None,
                     user: CurrentUser = Depends(current_user)):
+    if not q.strip():
+        return {"items": [], "gate": {"status": "insufficient", "messages": []}}
     with pool.connection() as conn:
-        hits = rag.search(conn, user.tenant_id, q, region=region or None, k=8)
-        gate = rag.evidence_gate(hits, as_of=date.today(), policy_question=rag.is_policy_question(q))
+        hits = rag.search(conn, user.tenant_id, q.strip(), k=12)
+    if type:
+        hits = [h for h in hits if h["source_type"] == type]
+    gate = rag.evidence_gate(hits, as_of=date.today(), policy_question=rag.is_policy_question(q))
     return {"items": list(gate["evidence"].values()), "gate": {"status": gate["status"], "messages": gate["messages"]}}
 
 
 @router.get("/evidence/{chunk_id}")
 def evidence_detail(chunk_id: str, user: CurrentUser = Depends(current_user)):
-    raw = chunk_id[1:] if chunk_id.startswith("c") else chunk_id
-    if not raw.isdigit():
-        raise HTTPException(404, "근거를 찾을 수 없습니다.")
-    row = fetch_one(
-        """SELECT c.id, c.document_id, c.location, c.text, d.title, d.publisher, d.source_type, d.published_at,
-                  d.effective_date, d.url, 0.0 AS score
-           FROM chunks c JOIN documents d ON d.id = c.document_id
-           WHERE c.id = %s AND (c.tenant_id IS NULL OR c.tenant_id = %s)""",
-        (int(raw), user.tenant_id),
-    )
+    with pool.connection() as conn:
+        row = drafting.get_chunk(conn, user.tenant_id, chunk_id)
     if not row:
-        raise HTTPException(404, "근거를 찾을 수 없습니다.")
+        raise HTTPException(404, "자료를 찾을 수 없습니다.")
     return rag.to_evidence(row)
-
-
-# ---------- AI 초안 ----------
-
-@router.post("/ask")
-def ask(body: AskIn, user: CurrentUser = Depends(current_user)):
-    with tx() as conn:
-        c = _consultation_row(conn, user.tenant_id, body.consultation_id)
-        draft_id = _domain(drafting.run_ask, conn, user, c, body.question.strip(), body.as_of)
-        return drafting.load_draft(conn, user.tenant_id, draft_id)
-
-
-@router.post("/advise")
-def advise(body: AdviseIn, user: CurrentUser = Depends(current_user)):
-    with tx() as conn:
-        c = _consultation_row(conn, user.tenant_id, body.consultation_id)
-        draft_id = _domain(drafting.run_advise, conn, user, c, body.listing_ids)
-        return drafting.load_draft(conn, user.tenant_id, draft_id)
-
-
-@router.get("/drafts")
-def list_drafts(consultation_id: int | None = None, user: CurrentUser = Depends(current_user)):
-    with pool.connection() as conn:
-        rows = conn.execute(
-            """SELECT id, mode, consultation_id, question, state, version, generator, created_at, gate->>'status' AS gate_status
-               FROM drafts WHERE tenant_id = %s AND (%s::int IS NULL OR consultation_id = %s) ORDER BY created_at DESC""",
-            (user.tenant_id, consultation_id, consultation_id),
-        ).fetchall()
-    return [{**r, "created_at": r["created_at"].isoformat(),
-             "version_label": drafting.version_label(r["state"], r["version"])} for r in rows]
-
-
-@router.get("/drafts/{draft_id}")
-def get_draft(draft_id: int, user: CurrentUser = Depends(current_user)):
-    with pool.connection() as conn:
-        return _draft_or_404(conn, user, draft_id)
-
-
-@router.put("/drafts/{draft_id}")
-def edit_draft(draft_id: int, body: DraftEditIn, user: CurrentUser = Depends(current_user)):
-    with tx() as conn:
-        d = _draft_or_404(conn, user, draft_id)
-        if d["state"] == "approved":
-            raise HTTPException(409, "승인된 초안은 수정할 수 없습니다.")
-        text = body.text.strip()
-        if text == d["text"].strip():
-            return d
-        new_version = d["version"] + 1
-        conn.execute("UPDATE drafts SET version = %s WHERE id = %s", (new_version, draft_id))
-        conn.execute("INSERT INTO draft_versions (draft_id, version, text, note, created_by) VALUES (%s,%s,%s,%s,%s)",
-                     (draft_id, new_version, text, body.note or "중개사 수정 저장", user.id))
-        record(conn, tenant_id=user.tenant_id, user_id=user.id, event="draft.edited", entity="draft",
-               entity_id=draft_id, payload={"version": new_version})
-        return drafting.load_draft(conn, user.tenant_id, draft_id)
-
-
-@router.post("/drafts/{draft_id}/review")
-def start_review(draft_id: int, user: CurrentUser = Depends(current_user)):
-    with tx() as conn:
-        d = _draft_or_404(conn, user, draft_id)
-        if d["state"] != "draft":
-            raise HTTPException(409, "AI 초안 상태에서만 검토를 시작할 수 있습니다.")
-        conn.execute("UPDATE drafts SET state = 'review' WHERE id = %s", (draft_id,))
-        record(conn, tenant_id=user.tenant_id, user_id=user.id, event="draft.review_started", entity="draft",
-               entity_id=draft_id, payload={"version": d["version"]})
-        return drafting.load_draft(conn, user.tenant_id, draft_id)
-
-
-@router.post("/drafts/{draft_id}/approve")
-def approve(draft_id: int, body: ApproveIn, user: CurrentUser = Depends(current_user)):
-    if not body.confirm:
-        raise HTTPException(400, "출처·기준일·확인 불가 항목 검토 확인이 필요합니다.")
-    with tx() as conn:
-        d = _draft_or_404(conn, user, draft_id)
-        if d["state"] != "review":
-            raise HTTPException(409, "검토 중인 초안만 승인할 수 있습니다.")
-        conn.execute("UPDATE drafts SET state = 'approved', approved_by = %s, approved_at = now() WHERE id = %s",
-                     (user.id, draft_id))
-        record(conn, tenant_id=user.tenant_id, user_id=user.id, event="draft.approved", entity="draft",
-               entity_id=draft_id, payload={"version": d["version"],
-                                            "unverifiable": sum(1 for c in d["claims"] if c["status"] == "unverifiable")})
-        return drafting.load_draft(conn, user.tenant_id, draft_id)
-
-
-@router.get("/drafts/{draft_id}/export", response_class=HTMLResponse)
-def export_draft(draft_id: int, user: CurrentUser = Depends(current_user)):
-    with tx() as conn:
-        d = _draft_or_404(conn, user, draft_id)
-        if d["state"] != "approved":
-            raise HTTPException(409, "승인본만 인쇄·복사할 수 있습니다.")
-        record(conn, tenant_id=user.tenant_id, user_id=user.id, event="draft.exported", entity="draft", entity_id=draft_id)
-    e = html.escape
-    lines = "".join(f"<p>{e(line)}</p>" for line in d["text"].splitlines() if line.strip())
-    sources = "".join(
-        f"<li><b>{e(ev['title'])}</b> · {e(ev['publisher'] or '')} · 기준일 {e(str(ev['date']))} · {e(ev['location'] or '')}</li>"
-        for ev in d["evidence"])
-    title = "정책 답변" if d["mode"] == "ask" else "상담자료"
-    return f"""<!doctype html><html lang="ko"><head><meta charset="utf-8"><title>중개메이트 {title} {e(d['version_label'])}</title>
-<style>body{{font-family:system-ui,'Malgun Gothic',sans-serif;max-width:760px;margin:40px auto;line-height:1.7;color:#1d2a26}}
-h1{{font-size:22px}}.meta{{color:#555;font-size:14px}}ol{{font-size:13px;color:#444}}</style></head>
-<body><h1>중개메이트 {title} {e(d['version_label'])}</h1>
-<p class="meta">승인자 {e(d['approved_by'] or '')} · 승인 시각 {e(d['approved_at'] or '')}{(' · 질문: ' + e(d['question'])) if d['question'] else ''}</p>
-{lines}<h2>근거 출처</h2><ol>{sources}</ol>
-<p class="meta">이 자료는 공인중개사가 출처·기준일을 검토하고 승인한 버전입니다. 확인 불가 항목은 추가 확인이 필요합니다.</p>
-<script>window.addEventListener('load',()=>window.print())</script></body></html>"""
 
 
 # ---------- 운영 ----------
@@ -506,30 +552,16 @@ def list_jobs(user: CurrentUser = Depends(require_admin)):
                             (user.tenant_id,)).fetchall()
 
 
-@router.get("/admin/documents")
-def list_documents(user: CurrentUser = Depends(require_admin)):
-    with pool.connection() as conn:
-        return conn.execute(
-            """SELECT d.id, d.tenant_id, d.source_type, d.title, d.publisher, d.published_at, d.effective_date, d.region,
-                      d.embed_model, (SELECT count(*) FROM chunks c WHERE c.document_id = d.id) AS chunks
-               FROM documents d WHERE d.tenant_id IS NULL OR d.tenant_id = %s ORDER BY d.id""", (user.tenant_id,)).fetchall()
-
-
 @router.delete("/admin/documents/{doc_id}")
 def delete_document(doc_id: int, user: CurrentUser = Depends(require_admin)):
     with tx() as conn:
-        doc = conn.execute("SELECT id, tenant_id, raw_path FROM documents WHERE id = %s AND tenant_id = %s",
-                           (doc_id, user.tenant_id)).fetchone()
+        doc = conn.execute("SELECT id, raw_path FROM documents WHERE id = %s AND tenant_id = %s", (doc_id, user.tenant_id)).fetchone()
         if not doc:
             raise HTTPException(404, "이 사무소 문서가 아니거나 존재하지 않습니다. (공용 문서는 운영자가 관리)")
-        conn.execute("DELETE FROM documents WHERE id = %s", (doc_id,))  # chunks는 ON DELETE CASCADE로 전파
+        conn.execute("DELETE FROM documents WHERE id = %s", (doc_id,))  # chunks는 ON DELETE CASCADE로 함께 지워진다
         record(conn, tenant_id=user.tenant_id, user_id=user.id, event="document.deleted", entity="document", entity_id=doc_id)
     if doc["raw_path"]:
-        try:
-            from pathlib import Path
-            Path(doc["raw_path"]).unlink(missing_ok=True)
-        except OSError:
-            pass
+        Path(doc["raw_path"]).unlink(missing_ok=True)
     return {"deleted": doc_id}
 
 

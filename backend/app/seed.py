@@ -11,17 +11,57 @@ log = logging.getLogger("mate.seed")
 EFFECTIVE_KEY = "first_home_support.effective_date"
 EFFECTIVE_LABEL = "생애최초 주택 구입 지원 시행일"
 
-LISTINGS_T1 = [
-    # label, title, complex, price(만원), area, station, walk, park, lat, lng, history
-    ("A", "한강뷰 아파트", "마포한강뷰", 78000, 59.9, "공덕역", 7, 9, 37.5428, 126.9497, []),
-    ("B", "공원앞 아파트", "마포공원앞", 75000, 62.3, "공덕역", 9, 3, 37.5462, 126.9568, [(77000, "2026-10-01"), (75000, "2026-10-22")]),
-    ("C", "역세권 아파트", "공덕역세권", 80000, 59.8, "공덕역", 4, 15, 37.5446, 126.9520, []),
-    ("D", "마포래미안 84", "마포래미안", 115000, 84.9, "애오개역", 6, 8, 37.5530, 126.9560, []),
-    ("E", "아현숲 소형", "아현숲", 72000, 49.5, "아현역", 5, 4, 37.5575, 126.9560, []),
-    ("F", "도화현대 59", "도화현대", 76000, 59.5, "마포역", 14, 6, 37.5395, 126.9465, [(78000, "2026-09-15"), (76000, "2026-10-10")]),
-    ("G", "신공덕 숲길", "신공덕숲길", 79000, 60.1, "공덕역", 10, 6, 37.5480, 126.9530, []),
+AGENTS_T1 = [  # key, email, name, role
+    ("kim", "agent@hanul.test", "김선용", "agent"),
+    ("park", "park@hanul.test", "박지은", "agent"),
+    ("lee", "lee@hanul.test", "이도현", "agent"),
+    ("admin", "admin@hanul.test", "하늘 관리자", "admin"),
 ]
-LISTINGS_T2 = [("A", "연희 언덕집", "연희언덕", 69000, 59.0, "신촌역", 12, 5, 37.5660, 126.9300, [])]
+
+LISTINGS_T1 = [
+    # label, title, complex, price(만원), area, floor, station, walk, park, lat, lng, 담당, 가격 이력
+    ("A", "마포한강뷰 59", "마포한강뷰", 78000, 59.9, "7/15층", "공덕역", 7, 9, 37.5428, 126.9497, "kim", []),
+    ("B", "마포공원앞 62", "마포공원앞", 75000, 62.3, "5/12층", "공덕역", 9, 3, 37.5462, 126.9568, "kim", [(77000, "2026-10-01"), (75000, "2026-10-22")]),
+    ("C", "공덕역세권 59", "공덕역세권", 80000, 59.8, "12/20층", "공덕역", 4, 15, 37.5446, 126.9520, "kim", []),
+    ("D", "마포래미안 84", "마포래미안", 115000, 84.9, "15/25층", "애오개역", 6, 8, 37.5530, 126.9560, "park", []),
+    ("E", "아현숲 49", "아현숲", 72000, 49.5, "3/10층", "아현역", 5, 4, 37.5575, 126.9560, "kim", []),
+    ("F", "도화현대 59", "도화현대", 76000, 59.5, "9/18층", "마포역", 14, 6, 37.5395, 126.9465, "park", [(78000, "2026-09-15"), (76000, "2026-10-10")]),
+    ("G", "신공덕숲길 60", "신공덕숲길", 79000, 60.1, "17/22층", "공덕역", 10, 6, 37.5480, 126.9530, "kim", []),
+    ("H", "염리언덕 59", "염리언덕", 68000, 59.2, "4/8층", "대흥역", 8, 5, 37.5490, 126.9440, "lee", []),
+    ("I", "대흥래미안 84", "대흥래미안", 92000, 84.0, "11/19층", "대흥역", 5, 7, 37.5478, 126.9408, "lee", []),
+    ("J", "용강리버뷰 59", "용강리버뷰", 83000, 59.9, "20/25층", "마포역", 6, 4, 37.5385, 126.9420, "kim", []),
+    ("K", "공덕자이 74", "공덕자이", 99000, 74.5, "8/21층", "공덕역", 3, 10, 37.5432, 126.9555, "park", []),
+    ("L", "마포한신 52", "마포한신", 64000, 52.0, "6/12층", "애오개역", 9, 6, 37.5515, 126.9500, "lee", []),
+]
+LISTINGS_T2 = [("A", "연희언덕집 59", "연희언덕", 69000, 59.0, "2/5층", "신촌역", 12, 5, 37.5660, 126.9300, "other", [])]
+
+CUSTOMERS_T1 = [
+    # name, 담당, phone, budget, area_min, walk, preferences, first_home
+    ("김하늘", "kim", "010-****-2481", 80000, 59, 10, ["통학", "공원", "조용한 주거지"], True),
+    ("박서준", "kim", "010-****-7720", 100000, 59, 15, ["역세권"], False),
+    ("최유나", "park", "010-****-1104", 100000, 74, 10, [], False),
+    ("정민호", "kim", "010-****-5093", 82000, 49, 10, ["역세권"], False),
+    ("한소희", "lee", "010-****-3361", 70000, 52, 15, [], True),
+    ("오지훈", "park", "010-****-8842", 85000, 59, 12, ["공원"], False),
+    ("윤채원", "kim", "010-****-0157", 82000, 59, 10, ["공원", "통학"], True),
+]
+
+DEALS_T1 = [
+    # 매물, 고객, 단계, 다음 할 일 / 무산 사유, 단계 바뀐 날
+    ("A", "김하늘", "nego", "11/1 매도인에게 7.6억 제안 전달", "2026-10-28"),
+    ("B", "김하늘", "visit", "11/2 14:00 2차 방문", "2026-10-26"),
+    ("E", "김하늘", "dropped", "전용 59㎡ 미만", "2026-10-24"),
+    ("C", "정민호", "intro", "관심 여부 전화 확인", "2026-10-29"),
+    ("G", "오지훈", "contract", "11/15 중도금", "2026-10-25"),
+    ("D", "박서준", "visit", "11/3 오전 방문", "2026-10-27"),
+    ("K", "최유나", "nego", "관리비·하자 보수 조건 조율", "2026-10-24"),
+    ("L", "한소희", "done", "10/20 잔금 완료", "2026-10-20"),
+    ("I", "최유나", "intro", "평면도 전달", "2026-10-28"),
+    ("J", "박서준", "intro", "조망 사진 전달", "2026-10-29"),
+    ("H", "한소희", "dropped", "다른 매물 계약", "2026-10-18"),
+    ("F", "오지훈", "intro", "방문 일정 조율", "2026-10-23"),
+    ("A", "박서준", "intro", "조망 사진 전달", "2026-10-29"),
+]
 
 TRADES = [
     ("마포한강뷰", 59.9, [(76500, "2026-03-11"), (77000, "2026-05-20"), (76000, "2026-07-02"), (77800, "2026-09-14")]),
@@ -91,30 +131,59 @@ def seed() -> None:
         t2 = conn.execute("INSERT INTO tenants (name) VALUES ('연희공인중개사사무소') RETURNING id").fetchone()["id"]
         pw = hash_password("demo1234")
         users = {}
-        for tenant, email, name, role in [(t1, "agent@hanul.test", "김선용", "agent"), (t1, "admin@hanul.test", "하늘 관리자", "admin"),
-                                          (t2, "agent@other.test", "이연희", "agent")]:
-            users[email] = conn.execute("INSERT INTO users (tenant_id, email, name, role, password_hash) VALUES (%s,%s,%s,%s,%s) RETURNING id",
-                                        (tenant, email, name, role, pw)).fetchone()["id"]
+        for key, email, name, role in AGENTS_T1:
+            users[key] = conn.execute("INSERT INTO users (tenant_id, email, name, role, password_hash) VALUES (%s,%s,%s,%s,%s) RETURNING id",
+                                      (t1, email, name, role, pw)).fetchone()["id"]
+        users["other"] = conn.execute("INSERT INTO users (tenant_id, email, name, role, password_hash) VALUES (%s,%s,%s,%s,%s) RETURNING id",
+                                      (t2, "agent@other.test", "이연희", "agent", pw)).fetchone()["id"]
 
         ids = {}
-        # 하늘사무소 매물은 김선용(중개사)이 대부분 직접 등록, D·F는 관리자 등록 ("내가 등록한 매물" 필터 확인용)
-        registrant = {t1: users["agent@hanul.test"], t2: users["agent@other.test"]}
         for tenant, rows in [(t1, LISTINGS_T1), (t2, LISTINGS_T2)]:
-            for i, (label, title, cx, price, area, st, walk, park, lat, lng, hist) in enumerate(rows):
-                by = users["admin@hanul.test"] if tenant == t1 and label in ("D", "F") else registrant[tenant]
+            district = "마포구" if tenant == t1 else "서대문구"
+            for i, (label, title, cx, price, area, floor, st, walk, park, lat, lng, agent, hist) in enumerate(rows):
                 lid = conn.execute(
-                    """INSERT INTO listings (tenant_id, label, title, complex_name, address, district, price, area_m2, floor,
-                                             station, station_walk_min, park_walk_min, lat, lng, description, source,
-                                             source_date, registered_by, created_at)
+                    """INSERT INTO listings (tenant_id, agent_id, label, title, complex_name, address, district, price, area_m2,
+                                             floor, station, station_walk_min, park_walk_min, lat, lng, description, source,
+                                             source_date, created_at)
                        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING id""",
-                    (tenant, label, title, cx, f"서울 {'마포구' if tenant == t1 else '서대문구'} {cx}로 {10 + len(cx)}",
-                     "마포구" if tenant == t1 else "서대문구", price, area, f"{5 + i * 2}층", st, walk, park, lat, lng,
-                     f"{title} 시연용 샘플 매물입니다. 실제 매물이 아닙니다.", "중개사 직접 등록 (시연용 샘플)",
-                     "2026-10-28", by, f"2026-10-{10 + i} 10:00+09"),
+                    (tenant, users[agent], label, title, cx, f"서울 {district} {cx}로 {10 + len(cx)}", district, price, area, floor,
+                     st, walk, park, lat, lng, "시연용 샘플 매물입니다. 실제 매물이 아닙니다.", "중개사 직접 등록 (샘플)",
+                     "2026-10-28", f"2026-10-{1 + i:02d} 10:00+09"),
                 ).fetchone()["id"]
                 ids[(tenant, label)] = lid
-                for p, at in hist:
+                for p, at in hist or [(price, "2026-10-01")]:
                     conn.execute("INSERT INTO listing_price_history (listing_id, price, changed_at) VALUES (%s,%s,%s)", (lid, p, at))
+
+        cust = {}
+        for name, agent, phone, budget, area_min, walk, prefs, first_home in CUSTOMERS_T1:
+            cust[name] = conn.execute(
+                """INSERT INTO customers (tenant_id, agent_id, name, deal_type, phone, budget_max, area_min, district,
+                                          station_walk_max, preferences, first_home, created_at)
+                   VALUES (%s,%s,%s,'아파트 매수',%s,%s,%s,'마포구',%s,%s,%s,'2026-10-15 10:00+09') RETURNING id""",
+                (t1, users[agent], name, phone, budget, area_min, walk, prefs, first_home)).fetchone()["id"]
+        other_c = conn.execute(
+            """INSERT INTO customers (tenant_id, agent_id, name, deal_type, budget_max, area_min, district)
+               VALUES (%s,%s,'이도윤','아파트 매수',70000,59,'서대문구') RETURNING id""", (t2, users["other"])).fetchone()["id"]
+
+        agent_of = {name: users[agent] for name, agent, *_ in CUSTOMERS_T1}
+        for label, name, stage, note, changed in DEALS_T1:
+            dropped = stage == "dropped"
+            did = conn.execute(
+                """INSERT INTO deals (tenant_id, listing_id, customer_id, agent_id, stage, next_action, dropped_reason,
+                                      stage_changed_at, created_at)
+                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING id""",
+                (t1, ids[(t1, label)], cust[name], agent_of[name], stage, None if dropped else note,
+                 note if dropped else None, f"{changed} 10:00+09", "2026-10-15 10:00+09")).fetchone()["id"]
+            conn.execute("INSERT INTO deal_events (deal_id, from_stage, to_stage, user_id, at) VALUES (%s, NULL, %s, %s, %s)",
+                         (did, stage, agent_of[name], f"{changed} 10:00+09"))
+        conn.execute("""INSERT INTO deals (tenant_id, listing_id, customer_id, agent_id, stage, next_action)
+                        VALUES (%s,%s,%s,%s,'visit','주말 방문')""", (t2, ids[(t2, "A")], other_c, users["other"]))
+
+        for text, at in [("1차 상담. 예산 8억, 전용 59㎡ 이상, 통학·공원 중요", "2026-10-17 14:00+09"),
+                         ("2차 상담. E 아현숲 제외(면적 부족)", "2026-10-24 15:00+09"),
+                         ("A 마포한강뷰 방문→협의", "2026-10-28 11:00+09")]:
+            conn.execute("INSERT INTO activities (customer_id, user_id, text, at) VALUES (%s,%s,%s,%s)",
+                         (cust["김하늘"], users["kim"], text, at))
 
         for cx, area, deals in TRADES:
             for i, (price, d) in enumerate(deals):
@@ -123,25 +192,6 @@ def seed() -> None:
                        VALUES ('11440','마포구','공덕동',%s,%s,%s,%s,%s,%s)""",
                     (cx, area, price, d, 5 + i, "국토교통부 아파트 매매 실거래가 (시연용 샘플)"),
                 )
-
-        c1 = conn.execute(
-            """INSERT INTO consultations (tenant_id, agent_id, customer_name, deal_type, budget_max, area_min, district,
-                                          station_walk_max, preferences, created_at)
-               VALUES (%s,%s,'김하늘','아파트 매수',80000,59,'마포구',10,%s,'2026-10-29 09:00+09') RETURNING id""",
-            (t1, users["agent@hanul.test"], ["통학", "공원", "조용한 주거지"]),
-        ).fetchone()["id"]
-        conn.execute(
-            """INSERT INTO consultations (tenant_id, agent_id, customer_name, deal_type, budget_max, area_min, district, station_walk_max)
-               VALUES (%s,%s,'박서준','아파트 매수',100000,84,'마포구',15)""", (t1, users["agent@hanul.test"]))
-        conn.execute(
-            """INSERT INTO consultations (tenant_id, agent_id, customer_name, deal_type, budget_max, area_min, district)
-               VALUES (%s,%s,'이도윤','아파트 매수',70000,59,'서대문구')""", (t2, users["agent@other.test"]))
-        for lid, status, reason in [(ids[(t1, "A")], "interest", "한강 조망 선호"), (ids[(t1, "B")], "interest", "공원 인접"),
-                                    (ids[(t1, "E")], "excluded", "전용 59㎡ 미만")]:
-            conn.execute("INSERT INTO consultation_candidates (consultation_id, listing_id, status, reason) VALUES (%s,%s,%s,%s)",
-                         (c1, lid, status, reason))
-        for note, at in [("1차 상담: 예산·면적 조건 확인", "2026-10-17 14:00+09"), ("2차 상담: 후보 E 제외(면적 부족)", "2026-10-24 15:00+09")]:
-            conn.execute("INSERT INTO consultation_logs (consultation_id, note, at) VALUES (%s,%s,%s)", (c1, note, at))
 
         tenants = {None: None, 1: t1, 2: t2}
         for d in DOCS:

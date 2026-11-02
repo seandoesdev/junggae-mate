@@ -3,615 +3,88 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <meta name="description" content="중개메이트 — 매물 지도와 상담 작업대" />
     <title>중개메이트</title>
-    <link rel="stylesheet"
-      href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
-      integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
-      crossorigin="" />
-    <link rel="stylesheet" href="styles.css" />
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+      integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="" />
     <link rel="stylesheet" href="app.css" />
   </head>
   <body>
+    <!-- 로그인 -->
+    <main id="login-screen" class="login">
+      <form id="login-form" class="login-box" novalidate>
+        <h1>중개메이트</h1>
+        <label>이메일<input id="login-email" type="email" autocomplete="username" value="agent@hanul.test" required /></label>
+        <label>비밀번호<input id="login-password" type="password" autocomplete="current-password" required /></label>
+        <p id="login-error" class="login-error" role="alert" hidden></p>
+        <button id="login-btn" type="submit" class="btn btn--main">로그인</button>
+        <p class="login-hint">예시 계정: agent@hanul.test / demo1234 (같은 사무소: park@, lee@, admin@hanul.test)</p>
+      </form>
+    </main>
 
-    <!-- ── LOGIN SCREEN ──────────────────────────────────── -->
-    <div id="login-screen" class="login-screen" role="main" aria-labelledby="login-title">
-      <div class="login-card">
-        <div class="login-brand">
-          <span class="brand-mark" aria-hidden="true">
-            <svg viewBox="0 0 40 40" role="img" aria-label="중개메이트 로고">
-              <path d="M8 31V17l12-9 12 9v14H8Z" />
-              <path d="M14 31V20h12v11M20 20v11" />
-            </svg>
-          </span>
-          <span>
-            <strong>중개메이트</strong>
-            <small>근거를 확인하는 상담 작업대</small>
-          </span>
-        </div>
-        <h1 id="login-title">로그인</h1>
-        <p class="login-hint">테스트 계정: <code>agent@hanul.test</code> / <code>demo1234</code></p>
-        <form id="login-form" novalidate>
-          <div class="form-field">
-            <label for="login-email">이메일</label>
-            <input type="email" id="login-email" name="email"
-              autocomplete="email" required value="agent@hanul.test" />
-          </div>
-          <div class="form-field">
-            <label for="login-password">비밀번호</label>
-            <input type="password" id="login-password" name="password"
-              autocomplete="current-password" required value="demo1234" />
-          </div>
-          <div id="login-error" class="login-error" role="alert" hidden></div>
-          <button type="submit" id="login-btn"
-            class="control-button control-button--primary login-submit">
-            로그인
-          </button>
-        </form>
-      </div>
-    </div>
-
-    <!-- ── MAIN APP ───────────────────────────────────────── -->
     <div id="app" hidden>
-      <a class="skip-link" href="#listing-panel">본문으로 이동</a>
-
       <header class="topbar">
-        <a class="brand" href="#/map" aria-label="중개메이트 처음으로">
-          <span class="brand-mark" aria-hidden="true">
-            <svg viewBox="0 0 40 40" role="img">
-              <path d="M8 31V17l12-9 12 9v14H8Z" />
-              <path d="M14 31V20h12v11M20 20v11" />
-            </svg>
-          </span>
-          <span>
-            <strong>중개메이트</strong>
-            <small>근거를 확인하는 상담 작업대</small>
-          </span>
-        </a>
-
-        <nav class="topbar-nav" aria-label="주요 탐색">
-          <a id="nav-map" href="#/map" class="nav-link is-active"
-            aria-current="page">매물 지도</a>
-          <a id="nav-consult" href="#/consult" class="nav-link">상담 작업대</a>
+        <a class="brand" href="#/map">중개메이트</a>
+        <span class="office" id="office-name"></span>
+        <nav class="nav" aria-label="주요 메뉴">
+          <a href="#/map" data-nav="map">지도</a>
+          <a href="#/deals" data-nav="deals">거래</a>
+          <a href="#/customers" data-nav="customers">고객</a>
+          <a href="#/library" data-nav="library">자료실</a>
         </nav>
-
-        <div class="topbar-right">
-          <div class="topbar-status" aria-live="polite">
-            <span class="live-dot" aria-hidden="true"></span>
-            <span id="topbar-user-text">로딩 중...</span>
-          </div>
-          <button type="button" id="logout-btn" class="logout-btn">로그아웃</button>
-        </div>
+        <span class="me"><span id="me-name"></span> <button type="button" class="logout" data-act="logout">로그아웃</button></span>
       </header>
 
-      <!-- ══ 매물 지도 VIEW ════════════════════════════════ -->
-      <div id="map-view" hidden>
-
-        <!-- Left listing panel -->
-        <div id="listing-panel" aria-label="매물 목록 및 상세">
-
-          <!-- ── LIST STATE ──────────────────────────────── -->
-          <div id="listing-list-view">
-            <div class="listing-panel-header">
-              <h2 class="listing-panel-title">
-                등록 매물 <span id="listing-count">0</span>건
-              </h2>
-              <button type="button" id="listing-register-btn"
-                class="approval-button approval-button--primary listing-reg-btn">
-                + 매물 등록
-              </button>
+      <main id="view-map" class="view view-map" hidden>
+        <aside class="side" id="map-side" aria-label="매물 목록과 상세"></aside>
+        <section class="map-wrap" aria-label="매물 지도">
+          <div class="map-bar">
+            <div class="toggle" role="group" aria-label="보기 범위">
+              <button type="button" data-scope="mine" aria-pressed="true">내 매물</button>
+              <button type="button" data-scope="all" aria-pressed="false">사무소 전체</button>
             </div>
-
-            <div class="listing-filter-row">
-              <label class="mine-toggle">
-                <input type="checkbox" id="listing-filter-mine" />
-                내가 등록한 매물만
-              </label>
-              <select id="listing-sort" class="sort-select" aria-label="정렬 방식">
-                <option value="recent">최신순</option>
-                <option value="price">가격순</option>
-              </select>
-            </div>
-
-            <div id="listing-map-fallback" class="map-fallback-msg" hidden>
-              지도를 불러오지 못했습니다. 목록으로 표시합니다.
-            </div>
-
-            <div id="listing-cards" class="listing-cards" aria-live="polite">
-              <p class="listings-empty">매물을 불러오는 중...</p>
-            </div>
+            <div class="stage-filter" id="stage-filter" role="group" aria-label="거래 단계 필터"></div>
           </div>
+          <div class="match-bar" id="match-bar" hidden></div>
+          <div class="pick-bar" id="pick-bar" hidden>지도를 눌러 매물 위치를 정하세요. 표시를 끌어서 옮길 수 있습니다.</div>
+          <div id="map" class="map"></div>
+          <p class="map-fail" id="map-fail" hidden>지도를 불러오지 못했습니다. 왼쪽 목록을 이용하세요.</p>
+        </section>
+      </main>
 
-          <!-- ── DETAIL STATE ────────────────────────────── -->
-          <div id="listing-detail-view" hidden>
-            <div class="listing-panel-header listing-detail-header">
-              <button type="button" id="listing-back-btn"
-                class="back-btn" aria-label="목록으로 돌아가기">
-                ← 목록으로
-              </button>
-            </div>
-
-            <div id="listing-detail">
-              <div class="ld-title-row">
-                <h2 id="listing-detail-title" class="ld-title"></h2>
-                <span id="ld-label" class="ld-label"></span>
-              </div>
-
-              <div class="ld-price-block">
-                <strong id="ld-price" class="ld-price-main"></strong>
-                <div id="ld-price-history" class="ld-price-history"></div>
-              </div>
-
-              <dl class="listing-facts">
-                <div><dt>면적 / 층</dt><dd id="ld-area">-</dd></div>
-                <div><dt>주소</dt><dd id="ld-address">-</dd></div>
-                <div><dt>지역</dt><dd id="ld-district">-</dd></div>
-                <div><dt>역 도보</dt><dd id="ld-station">-</dd></div>
-                <div><dt>공원 도보</dt><dd id="ld-park">-</dd></div>
-              </dl>
-
-              <div id="ld-description-wrap" class="ld-description" hidden>
-                <h3 class="ld-section-title">설명</h3>
-                <p id="ld-description"></p>
-              </div>
-
-              <dl class="listing-reg-info">
-                <div><dt>등록자</dt><dd id="ld-registered-by">-</dd></div>
-                <div><dt>등록일</dt><dd id="ld-created-at">-</dd></div>
-                <div><dt>출처</dt><dd id="ld-source">-</dd></div>
-                <div><dt>기준일</dt><dd id="ld-source-date">-</dd></div>
-              </dl>
-
-              <div id="ld-trade-ref" class="ld-trade-ref"></div>
-
-              <div id="ld-consultations" class="ld-consultations" hidden>
-                <h3 class="ld-section-title">상담 후보 현황</h3>
-                <ul id="ld-consultation-list" class="ld-consult-list"></ul>
-              </div>
-
-              <!-- Add to consultation -->
-              <div class="ld-actions-section">
-                <h3 class="ld-section-title">상담 후보로 추가</h3>
-                <div class="add-to-consult" id="add-to-consult">
-                  <select id="add-consult-select" class="sort-select"
-                    aria-label="상담 선택">
-                    <option value="">상담 선택...</option>
-                  </select>
-                  <div class="add-status-row">
-                    <button type="button" class="toggle-btn"
-                      data-status="interest">관심</button>
-                    <button type="button" class="toggle-btn"
-                      data-status="compare">비교</button>
-                    <button type="button" class="toggle-btn"
-                      data-status="excluded">제외</button>
-                  </div>
-                </div>
-              </div>
-
-              <!-- Manage actions (own listings only) -->
-              <div id="listing-mgmt-actions" class="listing-mgmt-actions" hidden>
-                <button type="button" id="btn-edit-listing"
-                  class="approval-button">수정</button>
-                <button type="button" id="listing-close-btn"
-                  class="approval-button listing-close-btn">거래 종료</button>
-              </div>
-            </div>
+      <main id="view-deals" class="view view-page" hidden>
+        <div class="page-head">
+          <h1>거래</h1>
+          <div class="toggle" role="group" aria-label="보기 범위">
+            <button type="button" data-scope="mine" aria-pressed="true">내 거래</button>
+            <button type="button" data-scope="all" aria-pressed="false">사무소 전체</button>
           </div>
-
-          <!-- ── FORM STATE ──────────────────────────────── -->
-          <div id="listing-form-view" hidden>
-            <div class="listing-panel-header">
-              <button type="button" id="listing-form-cancel-btn"
-                class="back-btn">← 취소</button>
-              <h2 id="listing-form-title" class="listing-panel-title">매물 등록</h2>
-            </div>
-
-            <p class="form-map-hint" id="form-map-hint">
-              지도를 클릭해 위치를 지정하세요.
-            </p>
-
-            <form id="listing-form" class="listing-form" novalidate>
-              <div class="form-field">
-                <label for="lf-title">매물명 <span aria-hidden="true">*</span></label>
-                <input type="text" id="lf-title" name="title" required
-                  placeholder="예: 한강뷰 아파트 3층" />
-              </div>
-              <div class="form-field">
-                <label for="lf-complex">단지명 <span aria-hidden="true">*</span></label>
-                <input type="text" id="lf-complex" name="complex_name" required
-                  placeholder="예: 마포래미안푸르지오" />
-              </div>
-              <div class="form-field">
-                <label for="lf-address">주소 <span aria-hidden="true">*</span></label>
-                <input type="text" id="lf-address" name="address" required
-                  placeholder="예: 서울시 마포구 아현동 123" />
-              </div>
-              <div class="form-field">
-                <label for="lf-district">지역(구) <span aria-hidden="true">*</span></label>
-                <input type="text" id="lf-district" name="district" required
-                  placeholder="예: 마포구" />
-              </div>
-              <div class="form-field form-field--sm">
-                <label for="lf-price">가격 (만원) <span aria-hidden="true">*</span></label>
-                <div class="input-with-hint">
-                  <input type="number" id="lf-price" name="price" required
-                    min="0" step="100" placeholder="78000" />
-                  <span class="input-hint" id="lf-price-hint"></span>
-                </div>
-              </div>
-              <div class="form-field form-field--sm">
-                <label for="lf-area">전용면적 (㎡) <span aria-hidden="true">*</span></label>
-                <input type="number" id="lf-area" name="area_m2" required
-                  min="0" step="0.01" placeholder="59.9" />
-              </div>
-              <div class="form-field form-field--sm">
-                <label for="lf-floor">층 <small>(선택, 예: 7층)</small></label>
-                <input type="text" id="lf-floor" name="floor"
-                  placeholder="7층" />
-              </div>
-              <div class="form-field form-field--sm">
-                <label for="lf-station">가까운 역 <small>(선택)</small></label>
-                <input type="text" id="lf-station" name="station"
-                  placeholder="공덕역" />
-              </div>
-              <div class="form-field form-field--sm">
-                <label for="lf-station-walk">역 도보 (분) <small>(선택)</small></label>
-                <input type="number" id="lf-station-walk" name="station_walk_min"
-                  min="0" step="1" placeholder="7" />
-              </div>
-              <div class="form-field form-field--sm">
-                <label for="lf-park-walk">공원 도보 (분) <small>(선택)</small></label>
-                <input type="number" id="lf-park-walk" name="park_walk_min"
-                  min="0" step="1" placeholder="3" />
-              </div>
-              <div class="form-field lf-coord-row">
-                <label for="lf-lat">위도 <span aria-hidden="true">*</span></label>
-                <input type="number" id="lf-lat" name="lat" required
-                  min="33" max="39" step="0.000001" placeholder="37.5665" />
-                <label for="lf-lng">경도 <span aria-hidden="true">*</span></label>
-                <input type="number" id="lf-lng" name="lng" required
-                  min="124" max="132" step="0.000001" placeholder="126.9780" />
-              </div>
-              <div class="form-field">
-                <label for="lf-description">설명 <small>(선택)</small></label>
-                <textarea id="lf-description" name="description" rows="3"
-                  placeholder="매물 특징, 주변 환경 등을 자유롭게 입력하세요."></textarea>
-              </div>
-
-              <div id="listing-form-error" class="login-error" role="alert" hidden></div>
-
-              <div class="listing-form-actions">
-                <button type="submit" id="listing-form-submit"
-                  class="control-button control-button--primary">
-                  등록
-                </button>
-              </div>
-            </form>
-          </div>
-
-        </div><!-- /#listing-panel -->
-
-        <!-- Leaflet map -->
-        <div id="map" aria-label="매물 위치 지도"></div>
-
-      </div><!-- /#map-view -->
-
-      <!-- ══ 상담 작업대 VIEW ════════════════════════════ -->
-      <div id="consult-view" hidden>
-        <main class="consult-main">
-
-          <!-- Mode tabs + Consultation select -->
-          <div class="mode-switcher app-mode-switcher" aria-label="기능 선택">
-            <div class="mode-tabs" role="tablist" aria-label="워크플로우 모드">
-              <button class="mode-tab is-active" id="tab-advise" type="button"
-                role="tab" aria-selected="true" aria-controls="flow-panel"
-                data-mode="advise">
-                후보 비교·상담 초안
-              </button>
-              <button class="mode-tab" id="tab-ask" type="button"
-                role="tab" aria-selected="false" aria-controls="flow-panel"
-                data-mode="ask">
-                정책·근거 질문
-              </button>
-            </div>
-
-            <div class="consultation-picker">
-              <label for="consultation-select" class="sr-only">상담 선택</label>
-              <select id="consultation-select" class="consultation-select"
-                aria-label="상담 선택">
-                <option value="">-- 상담을 선택하세요 --</option>
-              </select>
-            </div>
-          </div>
-
-          <div class="workflow-shell app-shell" id="app-shell">
-
-            <!-- ── LEFT: Context Panel ──────────────────── -->
-            <aside class="context-panel app-context-panel"
-              aria-labelledby="context-title">
-              <div class="panel-heading">
-                <span class="panel-index">상담 맥락</span>
-                <h2 id="context-title">고객 정보</h2>
-                <span class="status-chip status-chip--neutral"
-                  id="context-status">상담을 선택하세요</span>
-              </div>
-
-              <form id="conditions-form" class="conditions-form" novalidate
-                aria-label="고객 조건 입력">
-                <h3 class="form-section-title">고객 조건</h3>
-                <div class="form-field form-field--sm">
-                  <label for="cond-budget">예산 상한 (만원)</label>
-                  <div class="input-with-hint">
-                    <input type="number" id="cond-budget" name="budget_max"
-                      min="0" step="100" placeholder="80000"
-                      aria-describedby="budget-hint" />
-                    <span class="input-hint" id="budget-hint" aria-live="polite"></span>
-                  </div>
-                </div>
-                <div class="form-field form-field--sm">
-                  <label for="cond-area">최소 면적 (㎡)</label>
-                  <input type="number" id="cond-area" name="area_min"
-                    min="0" step="1" placeholder="59" />
-                </div>
-                <div class="form-field form-field--sm">
-                  <label for="cond-district">지역 (구)</label>
-                  <input type="text" id="cond-district" name="district"
-                    placeholder="마포구" />
-                </div>
-                <div class="form-field form-field--sm">
-                  <label for="cond-walk">역 도보 최대 (분)</label>
-                  <input type="number" id="cond-walk" name="station_walk_max"
-                    min="0" step="1" placeholder="10" />
-                </div>
-                <div class="form-field form-field--sm">
-                  <label for="cond-prefs">생활 선호 <small>(쉼표 구분)</small></label>
-                  <input type="text" id="cond-prefs" name="preferences"
-                    placeholder="통학, 공원, 조용한 주거지" />
-                </div>
-                <div id="conditions-warnings" class="conditions-warnings"
-                  role="alert" aria-live="polite" hidden></div>
-                <button type="submit" id="conditions-save-btn"
-                  class="approval-button approval-button--primary" disabled>
-                  조건 저장
-                </button>
-              </form>
-
-              <div class="candidate-section">
-                <h3 class="form-section-title">후보 매물</h3>
-                <div class="candidate-list" id="candidate-list"
-                  aria-label="후보 매물 목록" aria-live="polite">
-                  <p class="candidate-empty">
-                    상담을 선택하면 후보 목록이 표시됩니다.
-                  </p>
-                </div>
-              </div>
-
-              <div class="context-memory" id="context-memory" hidden>
-                <h3>상담 기억</h3>
-                <ul id="memory-list"></ul>
-              </div>
-            </aside>
-
-            <!-- ── CENTER: Flow Panel ───────────────────── -->
-            <section class="flow-panel app-flow-panel" id="flow-panel"
-              aria-label="상담 작업대">
-
-              <div class="draft-selector-row">
-                <label for="draft-select" class="panel-index">이전 초안 불러오기</label>
-                <select id="draft-select" class="draft-select"
-                  aria-label="이전 초안 선택">
-                  <option value="">-- 새 초안 --</option>
-                </select>
-              </div>
-
-              <!-- Listing search -->
-              <div class="listing-section">
-                <div class="listing-header">
-                  <h2 class="listing-section-title">매물 검색</h2>
-                  <div class="listing-filters">
-                    <label for="sort-select" class="sr-only">정렬</label>
-                    <select id="sort-select" class="sort-select"
-                      aria-label="정렬 방식">
-                      <option value="price">가격순</option>
-                      <option value="recent">최신순</option>
-                    </select>
-                    <button type="button" id="search-listings-btn"
-                      class="approval-button" disabled>매물 검색</button>
-                  </div>
-                </div>
-                <div id="listings-result" class="listings-result"
-                  aria-live="polite">
-                  <p class="listings-empty">상담을 선택하고 매물을 검색하세요.</p>
-                </div>
-                <div id="compare-bar" class="compare-bar" hidden>
-                  <span id="compare-count-label" aria-live="polite">0개 선택</span>
-                  <button type="button" id="compare-btn"
-                    class="approval-button approval-button--primary" disabled>
-                    비교표 생성 (2~5개)
-                  </button>
-                </div>
-                <div id="compare-result" class="compare-result"
-                  aria-live="polite" hidden></div>
-              </div>
-
-              <!-- 후보 비교·상담 초안 action -->
-              <div id="advise-area" class="action-area">
-                <div class="action-area-inner">
-                  <button type="button" id="advise-btn"
-                    class="control-button control-button--primary" disabled>
-                    상담 초안 생성
-                  </button>
-                  <p class="action-hint">
-                    선택한 매물 또는 compare 후보로 초안을 생성합니다.
-                  </p>
-                </div>
-              </div>
-
-              <!-- 정책·근거 질문 action -->
-              <div id="ask-area" class="action-area" hidden>
-                <form id="ask-form" class="ask-form" novalidate
-                  aria-label="정책 질의응답 입력">
-                  <div class="form-field">
-                    <label for="ask-question">질문</label>
-                    <textarea id="ask-question" name="question" rows="3"
-                      placeholder="예: 마포구 생애최초 주택 지원 적용 여부를 확인해 주세요."></textarea>
-                  </div>
-                  <div class="form-field form-field--sm">
-                    <label for="ask-as-of">기준일 <small>(선택)</small></label>
-                    <input type="date" id="ask-as-of" name="as_of" />
-                  </div>
-                  <button type="submit" id="ask-btn"
-                    class="control-button control-button--primary" disabled>
-                    질의응답 초안 생성
-                  </button>
-                </form>
-              </div>
-
-              <!-- Draft view -->
-              <div id="draft-view" class="draft-view" hidden
-                aria-live="polite">
-                <div id="gate-banner" class="gate-banner" role="status"
-                  aria-live="polite"></div>
-                <div class="draft-meta-row">
-                  <span id="draft-version-label" class="draft-version"></span>
-                  <span id="draft-generator-label"
-                    class="draft-generator"></span>
-                </div>
-                <div id="ai-warning-banner" class="demo-note ai-draft-banner">
-                  <span aria-hidden="true">!</span>
-                  <div>
-                    <strong>AI 초안 · 승인 전 고객 전달 불가</strong>
-                    중개사가 검토하고 승인한 버전만 상담에 사용할 수 있습니다.
-                  </div>
-                </div>
-                <div id="claims-list" class="claims-list"
-                  aria-label="사실 주장 목록"></div>
-                <div class="approval-section approval-demo">
-                  <ol class="approval-timeline" id="approval-timeline"
-                    aria-label="승인 진행 상태">
-                    <li id="tl-draft">AI 초안</li>
-                    <li id="tl-review">검토 중</li>
-                    <li id="tl-approved">승인 완료</li>
-                  </ol>
-                  <p class="approval-record" id="approval-record"></p>
-                  <div class="approval-editor">
-                    <label for="draft-editor">상담에 사용할 내용</label>
-                    <textarea id="draft-editor" rows="8"></textarea>
-                  </div>
-                  <div class="revision-history" id="revision-history" hidden>
-                    <strong>변경 이력</strong>
-                    <ul id="history-list"></ul>
-                  </div>
-                  <div class="approval-actions">
-                    <button type="button" id="btn-save-draft"
-                      class="approval-button">수정 저장</button>
-                    <button type="button" id="btn-review"
-                      class="approval-button">검토 시작</button>
-                    <button type="button" id="btn-approve"
-                      class="approval-button approval-button--primary">최종 승인</button>
-                    <button type="button" id="btn-export"
-                      class="approval-button">승인본 인쇄</button>
-                  </div>
-                </div>
-              </div>
-            </section>
-
-            <!-- ── RIGHT: Evidence Panel ─────────────────── -->
-            <aside class="evidence-panel app-evidence-panel"
-              aria-labelledby="evidence-title">
-              <div class="panel-heading">
-                <span class="panel-index">근거와 상태</span>
-                <h2 id="evidence-title">근거 문서</h2>
-              </div>
-              <div class="guardrail">
-                <span class="guardrail-icon" aria-hidden="true">✓</span>
-                <div>
-                  <strong>최종 판단은 중개사가 합니다</strong>
-                  <p>AI 결과는 승인 전까지 고객용 자료가 아닙니다.</p>
-                </div>
-              </div>
-              <div class="evidence-summary" aria-live="polite">
-                <div>
-                  <span>연결된 근거</span>
-                  <strong id="evidence-count">0건</strong>
-                </div>
-                <div>
-                  <span>현재 상태</span>
-                  <strong id="workflow-status">초안 없음</strong>
-                </div>
-              </div>
-              <div class="evidence-search-box">
-                <p class="panel-index">근거 직접 검색</p>
-                <div class="search-input-row">
-                  <label for="evidence-search" class="sr-only">근거 검색어</label>
-                  <input type="search" id="evidence-search"
-                    placeholder="법령, 정책, 기사 검색..."
-                    aria-label="근거 검색어" />
-                  <button type="button" id="evidence-search-btn"
-                    class="approval-button">검색</button>
-                </div>
-              </div>
-              <div id="evidence-list" class="evidence-list" aria-live="polite">
-                <div class="evidence-empty">
-                  아직 연결된 근거가 없습니다.<br />
-                  초안을 생성하면 근거가 표시됩니다.
-                </div>
-              </div>
-              <div class="state-legend">
-                <h3>상태 읽는 법</h3>
-                <ul>
-                  <li><span class="legend-mark legend-mark--verified"></span>근거 확인</li>
-                  <li><span class="legend-mark legend-mark--warning"></span>추가 확인 필요</li>
-                  <li><span class="legend-mark legend-mark--conflict"></span>자료 간 불일치</li>
-                  <li><span class="legend-mark legend-mark--draft"></span>AI 초안</li>
-                </ul>
-              </div>
-            </aside>
-
-          </div><!-- /app-shell -->
-        </main>
-      </div><!-- /#consult-view -->
-
-      <div id="toast" class="toast" role="alert" aria-live="assertive" hidden></div>
-    </div><!-- /#app -->
-
-    <!-- ── EVIDENCE DIALOG ───────────────────────────────── -->
-    <dialog class="evidence-dialog" id="evidence-dialog"
-      aria-labelledby="evidence-dialog-title">
-      <div class="dialog-heading">
-        <div>
-          <p class="panel-index">근거 상세</p>
-          <h2 id="evidence-dialog-title">근거 문서</h2>
         </div>
-        <button class="dialog-close" type="button"
-          aria-label="근거 상세 닫기">×</button>
-      </div>
-      <dl class="evidence-metadata">
-        <div><dt>발행 기관</dt><dd id="dialog-publisher"></dd></div>
-        <div><dt>발행일</dt><dd id="dialog-date"></dd></div>
-        <div id="dialog-effective-row" hidden>
-          <dt>시행일</dt><dd id="dialog-effective-date"></dd>
-        </div>
-        <div><dt>원문 위치</dt><dd id="dialog-location"></dd></div>
-        <div id="dialog-link-row" hidden>
-          <dt>링크</dt>
-          <dd><a id="dialog-link" href="#" target="_blank"
-            rel="noopener noreferrer">원문 보기</a></dd>
-        </div>
-      </dl>
-      <div class="source-snippet">
-        <h3>검색된 원문 조각</h3>
-        <blockquote id="dialog-snippet"></blockquote>
-      </div>
-      <p class="dialog-notice">
-        이 화면은 출처 확인을 돕습니다. 최종 상담 내용은 중개사가 원문과
-        적용 조건을 검토한 뒤 승인합니다.
-      </p>
-    </dialog>
+        <div class="board" id="board"></div>
+        <p class="dropped" id="dropped"></p>
+      </main>
+
+      <main id="view-customers" class="view view-split" hidden>
+        <aside class="side" id="customer-list" aria-label="고객 목록"></aside>
+        <section class="pane" id="customer-detail"></section>
+      </main>
+
+      <main id="view-library" class="view view-split" hidden>
+        <aside class="side" id="library-side" aria-label="자료 검색"></aside>
+        <section class="pane" id="library-detail"></section>
+      </main>
+
+      <main id="view-report" class="view view-report" hidden></main>
+    </div>
+
+    <aside class="drawer" id="drawer" aria-label="출처" hidden></aside>
+    <dialog id="dialog" class="dialog"></dialog>
+    <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
 
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
-      integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
-      crossorigin=""></script>
-    <script src="app.js"></script>
+      integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+    <script src="app-core.js"></script>
+    <script src="app-map.js"></script>
+    <script src="app-people.js"></script>
+    <script src="app-docs.js"></script>
   </body>
 </html>

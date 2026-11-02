@@ -1,10 +1,12 @@
-# 중개메이트 MVP
+# 중개메이트
 
-이 MVP는 `index.html`의 사용자 워크플로우와 설계 문서(PRD 기반 화면)를 구현한 것입니다.
-흐름은 매물 비교(구조화 사실) → 문서 근거 검색(RAG) → AI 초안 → 중개사 검토·승인입니다.
+여러 중개사가 매물과 고객을 함께 보는 부동산 사무소를 위한 업무 도구입니다.
 
-구성은 문서의 "MVP 실행" 항목을 따릅니다: **웹 화면 + FastAPI 애플리케이션 1개 + PostgreSQL(pgvector) 1개**.
-캐시, 메시지 큐, 별도 벡터 DB는 두지 않습니다.
+- **지도**: 매물이 고객과의 거래에서 어느 단계에 있는지(소개 → 방문 → 협의 → 계약 → 완료)를 색과 칸으로 보여 줍니다.
+- **고객 자료**: 비교표와 문의 답변을 근거 출처가 달린 문서로 만들고, 승인한 판만 인쇄·PDF나 링크로 고객에게 보냅니다.
+
+구성은 **웹 화면 + FastAPI 애플리케이션 1개 + PostgreSQL(pgvector) 1개**입니다. 캐시, 메시지 큐, 별도 벡터 DB는 두지 않습니다.
+설계 배경은 `docs/redesign.md`, API 계약은 `docs/API.md`, 클릭 시안은 `docs/prototype/index.html`에 있습니다.
 
 ## 실행 (Docker)
 
@@ -13,28 +15,57 @@ cp .env.example .env          # 선택: ANTHROPIC_API_KEY, DATA_GO_KR_SERVICE_KE
 docker compose up -d --build
 ```
 
-- 작업대: http://localhost:8000/app.html
-  - **매물 지도**(기본 화면, `#/map`): 사무소 매물을 지도 마커로 표시합니다(Leaflet + OpenStreetMap). 마커를 누르면 좌측에 매물 상세(가격 이력, 실거래가 참고, 걸린 상담)가 열리고, 지도를 클릭해 위치를 정한 뒤 **직접 등록**할 수 있습니다. 지도를 불러오지 못하면 목록과 좌표 직접 입력으로 대체합니다.
-  - **상담 작업대**(`#/consult`): 고객 조건, 후보 비교·상담 초안, 정책·근거 질문, 검토·승인
-- 사용자 워크플로우(설계 시안): http://localhost:8000/index.html
+- 작업 화면: http://localhost:8000/app.html (http://localhost:8000 도 같은 곳으로 이동)
 - API 문서(OpenAPI): http://localhost:8000/docs
+- 고객용 공개 링크: `http://localhost:8000/r/{token}` (승인 후 "링크로 보내기"로 만들어지며 7일 유효)
 
-시드 계정(비밀번호는 모두 `demo1234`):
+시드 계정 (비밀번호는 모두 `demo1234`):
 
-| 계정 | 역할 | 사무소 |
+| 계정 | 이름 | 역할 |
 |---|---|---|
-| `agent@hanul.test` | 중개사 (김선용) | 하늘공인중개사사무소 |
-| `admin@hanul.test` | 관리자 | 하늘공인중개사사무소 |
-| `agent@other.test` | 중개사 | 연희공인중개사사무소 (tenant 격리 확인용) |
+| `agent@hanul.test` | 김선용 | 중개사 (하늘공인중개사사무소) |
+| `park@hanul.test` | 박지은 | 중개사 (같은 사무소) |
+| `lee@hanul.test` | 이도현 | 중개사 (같은 사무소) |
+| `admin@hanul.test` | 하늘 관리자 | 관리자 (문서 등록, 감사 기록) |
+| `agent@other.test` | 이연희 | 다른 사무소 (데이터 분리 확인용) |
 
-시드의 매물, 실거래가, 정책, 기사 문서는 모두 **시연용 샘플**이며 제목에 `[샘플]`을 붙였습니다. 실제 정책과는 무관합니다.
+시드의 매물·실거래가·정책·기사는 모두 **예시 데이터**입니다. 정책·기사 문서 제목에는 `[샘플]`을 붙였습니다.
+
+## 화면
+
+| 메뉴 | 하는 일 |
+|---|---|
+| **지도** | 단계별 색 핀(칸 = 진행 정도, 숫자 = 연결된 고객 수), 내 매물/사무소 전체, 단계 필터. 핀을 누르면 왼쪽에 거래(단계 변경), **확인할 사항**(출처 연결), 매물 정보. 지도를 눌러 매물 등록 |
+| **거래** | 단계별 보드, 내 거래/사무소 전체, 단계 이동 |
+| **고객** | 찾는 조건, 거래, 고객 자료, 상담 기록. [조건에 맞는 매물 지도에서 보기] [비교표 작성] [문의 답변 작성] |
+| **자료실** | 법령·정책·사무소 문서·기사 검색, 원문 확인, 고객 문의 답변에 인용, (관리자) 문서 등록 |
+| **고객 자료** | A4 문서. 본문 각주 → 출처 목록. 작성 → 검토 → 승인 → 인쇄/PDF·링크 |
+
+### 문서 근거 검색(RAG)을 쓰는 곳
+
+1. **매물 › 확인할 사항**: 매물의 가격·지역·거래 단계에 맞는 항목을 자료실 문서에서 찾아 출처와 함께 보여 줍니다. 예를 들어 계약 단계가 되면 "30일 이내 거래 신고"가 거래신고법 조문과 함께 나타납니다.
+2. **고객 자료**: 문장마다 출처 각주를 답니다. 근거가 없는 내용은 본문에 넣지 않고 "추가로 확인할 사항"으로 보냅니다.
+3. **자료실**: 직접 검색합니다.
+
+자료 간 불일치(예: 기사와 공식 안내의 시행일 차이)나 시행 전 정책은 근거 게이트가 결정론적으로 표시합니다.
+
+### 권한 (기본값)
+
+- 사무소 전원이 모든 매물·고객·거래를 볼 수 있습니다.
+- 거래 단계 변경은 **거래 담당·매물 담당 중개사나 관리자**만 할 수 있습니다.
+- 매물 수정·거래 종료는 **매물 담당이나 관리자**만 할 수 있습니다.
+- 고객 자료 승인은 **고객 담당이나 관리자**만 할 수 있습니다.
+- 한 매물이 계약 단계가 되어도 같은 매물의 다른 거래는 **자동으로 무산 처리하지 않고** 안내만 합니다.
 
 ## 테스트
 
 ```bash
 docker compose up -d db
-docker compose run --rm app python -m pytest -q          # API 통합 테스트 (실제 Postgres)
-python test_workflow.py                                   # 정적 워크플로우 화면 Playwright 테스트 (로컬 Chrome)
+docker compose run --rm app python -m pytest -q     # API 통합 테스트 (테스트 전용 DB mate_test를 매번 새로 만듦)
+
+docker compose down -v && docker compose up -d --build   # 깨끗한 시드 데이터로 다시 시작
+python e2e_app.py                                    # 작업 화면 E2E (로컬 Chrome + Playwright)
+python test_workflow.py                              # 초기 워크플로우 시안(index.html) 테스트
 ```
 
 ## 구조
@@ -42,53 +73,44 @@ python test_workflow.py                                   # 정적 워크플로�
 ```
 docker-compose.yml        db(pgvector/pg16) + app(FastAPI, 정적 화면 포함)
 backend/
-  sql/schema.sql          테이블 (기동 시 멱등 실행)
+  sql/schema.sql          고객·거래·매물·고객 자료·문서 테이블 (기동 시 멱등 실행)
   app/main.py             앱, request ID 미들웨어, 정적 파일 화이트리스트
-  app/api.py              REST 라우트 (docs/API.md 계약)
-  app/security.py         JWT 인증, tenant는 토큰의 사용자 레코드에서만 확정
-  app/drafting.py         구조화 비교(경로 A), /ask·/advise 초안, 승인 버전 관리
+  app/api.py              REST 라우트 (docs/API.md) + 공개 링크 /r/{token}
+  app/workflow.py         거래 단계·권한, 매물별 확인할 사항, 고객 자료 상태·공유·인쇄 HTML
+  app/drafting.py         매물 조회, 고객 자료 본문(문장 + 출처 표시) 작성
   app/rag.py              수집·청킹·임베딩, 권한 필터 → 하이브리드 검색 → 재정렬 → 근거 게이트
-  app/chunking.py         법령(조문)/정책(절)/FAQ(Q&A)/사무소/뉴스별 청킹
+  app/chunking.py         법령(조문)/정책(절)/FAQ/사무소/기사별 청킹
   app/embedding.py        384차원 문자 n-gram 해싱 임베딩 (외부 의존 없음)
-  app/llm.py              Claude (선택). 실패 시 초안만 503, 나머지는 정상 동작
+  app/llm.py              Claude (선택). 실패하면 고객 자료 작성만 503
   app/public_data.py      실거래가 API 어댑터 (시간초과 + 회로 차단기)
-  app/seed.py             시연 데이터
-  tests/test_api.py       tenant 격리, 근거 게이트, 승인 흐름, LLM 장애 강등, 문서 삭제 전파
-app.html / app.js / app.css   상담 작업대 (API 연동)
-index.html / script.js / styles.css   사용자 워크플로우 시안 (정적)
-docs/API.md               API 계약
-docs/images/              화면 미리보기 (E2E 테스트가 갱신)
-test_workflow.py / e2e_app.py   브라우저 테스트
+  app/seed.py             예시 데이터
+  tests/                  API 통합 테스트
+app.html / app.js / app.css   작업 화면
+index.html / script.js / styles.css   초기 워크플로우 시안 (정적)
+docs/                     API 계약, 재설계안, 클릭 시안, 화면 이미지
+e2e_app.py / test_workflow.py   브라우저 테스트
 ```
 
-## 설계 문서와의 대응
+## 설계 원칙과 구현
 
-| 설계 원칙 | 구현 |
+| 원칙 | 구현 |
 |---|---|
-| 매물은 데이터로 비교 | `listings` / `apt_trades` SQL 필터·정렬, 조건별 ✓/✗ 체크 (벡터화하지 않음) |
-| 설명은 근거와 연결 | claim마다 `citations`. 존재하지 않는 근거 id는 제거하고, 근거 없는 사실 주장은 `확인 불가`로 강등 |
-| 모르면 확인 불가 | 공식 근거 없음, 뉴스만 있음, 시행 전, 자료 간 불일치를 근거 게이트가 결정론적으로 표시 |
-| 승인은 사람이 수행 | `draft → review → approved` 상태 전이, 버전 이력, 승인 후 수정 불가, 승인본만 인쇄 |
-| 근거 우선순위 | 법령(1) > 공식 정책(2) > 사무소 문서(3) > 뉴스(4). 충돌 시 상위 자료 기준 |
-| 검색 전에 차단 | SQL `WHERE`에서 tenant ACL·지역·기준일을 먼저 적용한 뒤 순위 계산 |
-| 고객 개인정보 | 공용 인덱스·감사 payload·LLM 프롬프트에 고객 이름을 넣지 않음 |
-| 문서 속 명령은 데이터 | LLM 시스템 프롬프트에서 `<evidence>` 내용은 지시로 따르지 않도록 지정 |
-| 삭제 전파 | 문서 삭제 시 청크 CASCADE 삭제와 원문 파일 삭제 |
-| 장애 시 강등 | LLM 장애 시 `/ask`·`/advise`만 503. 매물·비교·근거 검색은 계속 동작 |
-| 기본 운영 기록 | 응답마다 `X-Request-ID`, 4xx/5xx 로그, `audit_events` 테이블 |
+| 매물은 데이터로 비교 | 매물·실거래가는 SQL로 조회하며 벡터화하지 않음 |
+| 설명은 근거와 연결 | 본문 문장마다 출처 id. 없는 id는 제거하고, 출처 없는 주장은 "추가로 확인할 사항"으로 보냄 |
+| 모르면 단정하지 않음 | 공식 근거 없음·기사만 있음·시행 전·자료 간 불일치를 근거 게이트가 표시 |
+| 승인은 사람이 | 작성 → 검토 → 승인(고객 담당) → 전달. 승인 후 수정 불가, 승인본만 인쇄·공유 |
+| 근거 우선순위 | 법령 > 공식 정책 > 사무소 문서 > 기사(보조) |
+| 검색 전에 차단 | SQL `WHERE`에서 사무소·지역·기준일을 먼저 거름 |
+| 개인정보 | LLM 프롬프트·감사 기록에 고객 이름·연락처를 넣지 않음 |
+| 장애 시 강등 | LLM 장애 시 고객 자료 작성만 503. 지도·거래·자료실은 정상 |
+| 운영 기록 | `X-Request-ID`, 단계 변경·승인·공유·열람을 감사 기록과 고객 상담 기록에 남김 |
 
 ## LLM / 임베딩
 
-- `ANTHROPIC_API_KEY`가 없으면 **규칙 기반 초안 생성기**(`generator: "template"`)가 근거 조각에서 직접 주장을 만듭니다.
-- 키를 설정하면 Claude(`LLM_MODEL`, 기본값 `claude-opus-5-5`)가 초안을 작성합니다. 이 경우에도 인용 검증과 근거 게이트 항목은 서버가 결정론적으로 덧붙입니다.
-- 임베딩은 MVP용 해싱 임베딩입니다. 교체할 때는 `embedding.py`를 바꾸고 문서를 재인덱싱합니다. 모델 버전은 `documents.embed_model`에 기록됩니다.
+- `ANTHROPIC_API_KEY`가 없으면 문장 틀에 매물 데이터와 문서 조각을 채우는 **규칙 기반 작성기**로 동작합니다.
+- 키를 설정하면 Claude(`LLM_MODEL`, 기본 `claude-opus-5-5`)가 의견 문단을 씁니다. 이때도 출처 검증과 근거 게이트 항목은 서버가 결정론적으로 덧붙입니다.
+- 임베딩은 MVP용 해싱 임베딩입니다. 바꾸려면 `embedding.py`를 교체하고 문서를 다시 인덱싱합니다.
 
-## 관리자 기능
+## 범위 밖
 
-- `POST /api/admin/documents`: txt/md/pdf 업로드. PDF는 PyMuPDF로 쪽 단위 추출합니다. `scope=public|tenant`.
-- `POST /api/admin/collect/trades` `{lawd_cd: "11440", deal_ymd: "202609"}`: 공공데이터포털 실거래가 수집. `DATA_GO_KR_SERVICE_KEY`가 필요합니다.
-- `GET /api/admin/jobs`, `GET /api/admin/documents`, `DELETE /api/admin/documents/{id}`, `GET /api/audit`
-
-## MVP 범위 밖 (설계 문서 기준)
-
-React 재구현, Redis·Celery, Qdrant·OpenSearch, OpenTelemetry, Kubernetes, MCP 필수 연동, OCR(스캔 PDF는 업로드 시 오류), 지도 공급자 JS API(작업대는 좌표 기반 미니맵 사용), 골든 Q&A 통과 후 인덱스 원자 교체.
+React 재구현, Redis·Celery, 별도 벡터 DB, OpenTelemetry, Kubernetes, MCP 필수 연동, OCR(스캔 PDF는 업로드 시 오류), 유료 지도 API(OpenStreetMap 타일 사용), 알림(링크 열람 시 상담 기록에만 남음).
