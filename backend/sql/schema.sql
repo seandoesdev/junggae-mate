@@ -78,6 +78,16 @@ CREATE TABLE IF NOT EXISTS listing_price_history (
 );
 
 -- 매물별 확인할 사항 체크 상태 (항목 내용은 문서 근거 검색으로 매번 생성)
+-- 현장 메모: 중개사가 직접 적는 매물 정보. 질문 검색에서 매물을 찾을 때 함께 본다
+CREATE TABLE IF NOT EXISTS listing_notes (
+  id          SERIAL PRIMARY KEY,
+  listing_id  INT NOT NULL REFERENCES listings(id) ON DELETE CASCADE,
+  user_id     INT REFERENCES users(id),
+  text        TEXT NOT NULL,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS listing_notes_idx ON listing_notes (listing_id, created_at DESC);
+
 CREATE TABLE IF NOT EXISTS listing_checks (
   listing_id  INT NOT NULL REFERENCES listings(id) ON DELETE CASCADE,
   key         TEXT NOT NULL,
@@ -146,6 +156,8 @@ CREATE TABLE IF NOT EXISTS documents (
   embed_model     TEXT NOT NULL,
   created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+-- 중개사가 자료실에 직접 추가한 사무소 자료의 작성자 (기존 DB에도 적용)
+ALTER TABLE documents ADD COLUMN IF NOT EXISTS created_by INT REFERENCES users(id);
 CREATE UNIQUE INDEX IF NOT EXISTS documents_hash_idx ON documents (content_hash, COALESCE(tenant_id, 0));
 
 CREATE TABLE IF NOT EXISTS chunks (
@@ -220,3 +232,37 @@ CREATE TABLE IF NOT EXISTS audit_events (
   created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS audit_entity_idx ON audit_events (entity, entity_id);
+
+-- Hood AI: 사무소별 설정, 질문 대화(세션)와 질문·답변 기록
+CREATE TABLE IF NOT EXISTS ai_settings (
+  tenant_id     INT PRIMARY KEY REFERENCES tenants(id),
+  source_types  TEXT[] NOT NULL DEFAULT ARRAY['law','policy','office','news'],
+  detail_count  INT NOT NULL DEFAULT 3 CHECK (detail_count BETWEEN 1 AND 5),
+  near_miss     BOOLEAN NOT NULL DEFAULT true,
+  monthly_limit INT CHECK (monthly_limit IS NULL OR monthly_limit > 0),
+  updated_by    INT REFERENCES users(id),
+  updated_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS ai_sessions (
+  id          SERIAL PRIMARY KEY,
+  tenant_id   INT NOT NULL REFERENCES tenants(id),
+  user_id     INT NOT NULL REFERENCES users(id),
+  title       TEXT NOT NULL,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS ai_sessions_user_idx ON ai_sessions (user_id, updated_at DESC);
+
+CREATE TABLE IF NOT EXISTS ai_messages (
+  id               SERIAL PRIMARY KEY,
+  session_id       INT NOT NULL REFERENCES ai_sessions(id) ON DELETE CASCADE,
+  question         TEXT NOT NULL,
+  effective_query  TEXT NOT NULL,           -- 이어 묻기('그중 7억 이하만')를 앞 질문과 합친 실제 질문
+  dropped          TEXT[] NOT NULL DEFAULT '{}',
+  result           JSONB NOT NULL,
+  generator        TEXT NOT NULL,
+  created_at       TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS ai_messages_session_idx ON ai_messages (session_id, id);
+CREATE INDEX IF NOT EXISTS ai_messages_created_idx ON ai_messages (created_at);

@@ -14,6 +14,8 @@ CITY = "서울"  # MVP: 서울 소재 사무소 기준. 지역 필터는 "서울
 STAGES = ("intro", "visit", "nego", "contract", "done")
 # 시드 정책 문서(생애최초 지원 안내)의 주택가격 기준. 실제 운영에서는 문서 사실(facts)로 관리한다.
 FIRST_HOME_PRICE_LIMIT = 90000
+# 실거래가 출처 페이지 (public_data.TRADE_URL이 쓰는 데이터셋과 같은 번호)
+TRADE_PAGE = "https://www.data.go.kr/data/15126468/openapi.do"
 
 
 class DomainError(ValueError):
@@ -180,7 +182,7 @@ def trade_evidence(l: dict, ref: dict) -> dict:
             "title": "아파트 매매 실거래가", "org": ref["source"], "date": ref["as_of"], "effective_date": None,
             "location": f"{l['complex_name']} 유사 면적 · {ref['period']} · {ref['count']}건",
             "snippet": f"동일 단지·유사 면적 최근 12개월 실거래 {ref['count']}건, 중위 {eok(ref['median_price'])}.",
-            "url": "https://www.data.go.kr/data/15126468/openapi.do", "document_id": None, "score": None,
+            "url": TRADE_PAGE, "document_id": None, "score": None,
             "state": "ok", "note": "신고된 과거 거래 가격입니다. 현재 매도 희망가나 거래 가능 여부를 뜻하지 않습니다."}
 
 
@@ -407,33 +409,3 @@ def get_chunk(conn, tenant_id: int, chunk_id: str) -> dict | None:
            FROM chunks c JOIN documents d ON d.id = c.document_id
            WHERE c.id = %s AND (c.tenant_id IS NULL OR c.tenant_id = %s)""",
         (int(raw), tenant_id)).fetchone()
-
-
-def draft_answer(conn, user, customer: dict, question: str, quote_id: str | None) -> dict:
-    as_of = date.today()
-    region = region_of(customer.get("district"))
-    hits = rag.search(conn, user.tenant_id, question, region=region, as_of=as_of)
-    quoted = None
-    if quote_id:
-        quoted = get_chunk(conn, user.tenant_id, quote_id)
-        if not quoted:
-            raise DomainError("인용할 자료를 찾을 수 없습니다.", 404)
-        hits = [quoted] + [h for h in hits if h["id"] != quoted["id"]]
-    gate = rag.evidence_gate(hits, as_of=as_of, policy_question=rag.is_policy_question(question))
-    body = Body()
-    generator = "template"
-    if llm.is_enabled():
-        for ev in gate["evidence"].values():
-            body.add(ev)
-        llm_body(body, f"고객 문의에 대한 답변 (중개사 1인칭, 존댓말, 사실마다 출처 id): {question}",
-                 f"기준일 {as_of}, 지역 {region or '미지정'}, 고객 조건: {cond_summary(customer)}")
-        generator = "anthropic"
-    else:
-        ordered = sorted(hits, key=lambda h: (quoted is None or h["id"] != quoted["id"],
-                                              rag.AUTHORITY[h["source_type"]], -h["score"]))
-        for h in [h for h in ordered if h["source_type"] != "news"
-                  and gate["evidence"][f"c{h['id']}"]["state"] != "conflict"][:2]:
-            body.say(_lead(h["text"]), [body.add(gate["evidence"][f"c{h['id']}"])])
-    apply_gate(body, gate)
-    return {**body.result(), "listings": [], "gate": {"status": gate["status"], "messages": gate["messages"]},
-            "generator": generator, "title": "문의 답변"}

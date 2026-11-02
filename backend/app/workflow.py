@@ -4,7 +4,7 @@ import re
 import secrets
 from datetime import date, datetime, timedelta, timezone
 
-from . import drafting, rag
+from . import assistant, drafting, hood, rag
 from .audit import record
 from .db import Jsonb
 
@@ -196,13 +196,15 @@ def version_label(state: str, version: int) -> str:
     return "1.0" if state in ("approved", "shared") else f"0.{version}"
 
 
-def create_report(conn, user, customer: dict, kind: str, *, listing_ids=None, question=None, quote_id=None) -> int:
+def create_report(conn, user, customer: dict, kind: str, *, listing_ids=None, question=None, quote_id=None,
+                  drop=None) -> int:
     if kind == "compare":
         content = drafting.draft_compare(conn, user, customer, listing_ids)
     else:
         if not (question or "").strip():
             raise drafting.DomainError("고객 문의 내용을 적어 주세요.")
-        content = drafting.draft_answer(conn, user, customer, question.strip(), quote_id)
+        content = assistant.answer(conn, user, question, customer=customer, quote_id=quote_id, dropped=drop,
+                                   settings=hood.get_settings(conn, user.tenant_id))
     row = conn.execute(
         """INSERT INTO reports (tenant_id, customer_id, kind, title, question, listings, sources, gate, generator, created_by)
            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING id""",
@@ -330,16 +332,17 @@ def render_html(report: dict, office: str, *, print_on_load: bool) -> str:
         return e(", ".join(bad)) if bad else "맞음"
 
     table = ""
-    if report["kind"] == "compare" and report["listings"]:
+    if report["listings"]:
         ls = report["listings"]
         rows = [("매도 희망가", lambda l: drafting.eok(l["price"])),
                 ("전용면적 / 층", lambda l: f"{l['area_m2']:g}㎡ / {e(l.get('floor') or '-')}"),
-                ("교통", lambda l: f"{e(l.get('station') or '-')} 도보 {l.get('station_walk_min')}분"),
+                ("교통", lambda l: e(l.get("station") or "-")
+                 + (f" 도보 {l['station_walk_min']}분" if l.get("station_walk_min") is not None else "")),
                 ("공원", lambda l: f"도보 {l.get('park_walk_min')}분"),
                 ("최근 실거래", cell_trade), ("조건", cell_fit)]
         head = "".join(f"<th>{e(l['label'])} {e(l['title'])}</th>" for l in ls)
         body = "".join(f"<tr><th>{h}</th>{''.join(f'<td>{f(l)}</td>' for l in ls)}</tr>" for h, f in rows)
-        table = f"<h2>매물 비교</h2><table><thead><tr><th></th>{head}</tr></thead><tbody>{body}</tbody></table>"
+        table = f"<h2>{'매물 비교' if report['kind'] == 'compare' else '맞는 매물'}</h2><table><thead><tr><th></th>{head}</tr></thead><tbody>{body}</tbody></table>"
     question = f"<h2>문의 내용</h2><p>{e(report['question'])}</p>" if report.get("question") else ""
     opinion = notes(report["opinion"])
     checks = "".join(f"<li>{notes(t)}</li>" for t in report["to_check"])
