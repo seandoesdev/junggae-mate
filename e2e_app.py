@@ -29,7 +29,7 @@ def run():
         # ── 지도: 내 매물, 단계 색 핀 ──
         pins = page.locator("#map .pin")
         expect(pins).to_have_count(6, timeout=15000)
-        body = page.inner_text("body")
+        body = page.inner_text("body").replace("Hood AI", "")  # 제품 메뉴 이름 'Hood AI'만 예외 (화면 문구에 'AI' 딱지는 쓰지 않는다)
         for word in ("AI", "/advise", "/ask", "근거 확인"):
             assert word not in body, f"'{word}'가 화면에 보임"
         expect(page.locator('#map .pin[data-id="1"]')).to_have_attribute("data-s", "nego")
@@ -78,6 +78,99 @@ def run():
         page.click("#listing-close-btn")
         expect(pins).to_have_count(12, timeout=10000)
 
+        # ── 질문 검색 → 답변(각주 출처) + 맞는 매물(지도 강조) ──
+        layer = page.locator("#ask-layer")
+        page.click("#ask-trigger")                                            # 질문 창: 뒤가 흐려지고 위에서 내려온다
+        expect(layer).to_have_class("ask-layer is-open")
+        expect(page.locator("#ask-q")).to_be_focused()
+        page.wait_for_timeout(400)
+        page.screenshot(path=str(IMAGES / "app-ask-open.png"))
+        page.mouse.click(300, 700)                                            # 바깥 아무 곳이나 누르면 닫힌다
+        expect(layer).not_to_have_class("ask-layer is-open")
+        page.keyboard.press("/")                                              # '/'로 다시 열기
+        expect(page.locator("#ask-q")).to_be_focused()
+        page.keyboard.press("Escape")
+        expect(layer).not_to_have_class("ask-layer is-open")
+        page.click("#ask-trigger")
+        page.fill("#ask-q", "마포구 8억 이하 59㎡ 학교 가까운 집")
+        page.press("#ask-q", "Enter")
+        expect(layer).not_to_have_class("ask-layer is-open")
+        expect(side.locator("#ask-answer")).to_contain_text("마포초", timeout=15000)
+        expect(side.locator(".cond")).to_have_count(4)
+        assert side.locator("#ask-answer sup .srcref").count() >= 3, "답변 각주가 부족함"
+        rows = side.locator("#ask-listings .lrow")
+        n = rows.count()
+        assert n >= 3
+        expect(page.locator("#map .pin.is-match")).to_have_count(n)
+        expect(page.locator("#match-bar")).to_contain_text("질문 결과")
+        page.wait_for_timeout(500)
+        page.screenshot(path=str(IMAGES / "app-ask.png"))
+        side.locator('.cond[data-key="price"]').click()                       # 가격 조건 빼고 다시 찾기
+        expect(side.locator("[data-act=ask-reset]")).to_be_visible(timeout=10000)
+        expect(side.locator('.cond[data-key="price"]')).to_have_count(0)
+        assert rows.count() > n
+        rows.first.click()                                                    # 결과 매물 → 상세
+        expect(side.locator(".detail")).to_be_visible(timeout=10000)
+        side.locator("#note-form textarea").fill("E2E 메모: 밤에 조용함")         # 현장 메모
+        side.locator("#note-form button").click()
+        expect(side.locator(".notes")).to_contain_text("E2E 메모", timeout=10000)
+        side.locator("[data-act=back]").click()                               # 질문 결과로 (뺀 조건 유지)
+        expect(side.locator("#ask-answer")).to_be_visible(timeout=10000)
+        expect(side.locator("[data-act=ask-reset]")).to_be_visible()
+        page.click("#map-side [data-act=clear-ask]")
+        expect(page.locator("#match-bar")).to_be_hidden()
+
+        # ── 지역 이름: 사무소 밖 지역은 지도를 그 지역으로 옮기고, 없다는 사실과 지금 있는 곳을 알려 준다 ──
+        page.click("#ask-trigger")
+        page.fill("#ask-q", "동탄 매물 보여줘")
+        page.press("#ask-q", "Enter")
+        expect(side.locator("#ask-answer")).to_contain_text("마포구", timeout=15000)
+        expect(page.locator("#map .place-tag")).to_contain_text("동탄")
+        expect(side.locator("#ask-listings")).to_contain_text("등록된 매물이 없습니다")
+        page.click("#map-side [data-act=clear-ask]")
+
+        # ── Hood AI: 메뉴에 마우스를 올리면 목록, 누르면 전용 검색 화면, 이어 묻기 ──
+        page.hover('[data-nav="ai"]')
+        expect(page.locator(".nav-menu")).to_be_visible()
+        expect(page.locator(".nav-menu")).to_contain_text("사용량")
+        page.click('[data-nav="ai"]')
+        page.mouse.move(760, 640)
+        expect(page.locator(".nav-menu")).to_be_hidden()
+        page.fill("#ai-form textarea", "마포구 59㎡ 집")
+        page.press("#ai-form textarea", "Enter")
+        expect(page.locator("#ai-main .turn:not(.is-pending)")).to_have_count(1, timeout=15000)
+        page.fill("#ai-form textarea", "그중 7.6억 이하만")
+        page.press("#ai-form textarea", "Enter")
+        expect(page.locator("#ai-main .turn:not(.is-pending)")).to_have_count(2, timeout=15000)
+        expect(page.locator("#ai-main .turn").nth(1)).to_contain_text("이어서 찾은 조건")
+        expect(page.locator("#ai-history")).to_contain_text("마포구 59㎡ 집")
+        page.wait_for_timeout(600)
+        page.screenshot(path=str(IMAGES / "app-hood.png"))
+
+        # Ask Hood 패널: 다른 화면에서 열고, 시계로 이전 대화를 불러와 이어 묻기
+        page.click("[data-nav=deals]")
+        page.click("#ask-hood-btn")
+        expect(page.locator("#hood-panel")).to_have_attribute("aria-hidden", "false")
+        page.click("#hood-history-btn")
+        page.locator(".hood-hist button", has_text="마포구 59㎡ 집").click()
+        expect(page.locator("#hood-body .turn")).to_have_count(2)
+        page.fill("#hood-q", "그중 공원 가까운 곳")
+        page.press("#hood-q", "Enter")
+        expect(page.locator("#hood-body .turn:not(.is-pending)")).to_have_count(3, timeout=15000)
+        page.wait_for_timeout(400)
+        page.screenshot(path=str(IMAGES / "app-hood-panel.png"))
+        page.click('#hood-panel [data-act="hood-close"]')
+        expect(page.locator("#hood-panel")).to_have_attribute("aria-hidden", "true")
+
+        # 보고서·사용량·설정
+        page.evaluate("location.hash = '#/ai/usage'")
+        expect(page.locator(".kpis")).to_contain_text("이번 달 질문", timeout=10000)
+        page.screenshot(path=str(IMAGES / "app-hood-usage.png"))
+        page.evaluate("location.hash = '#/ai/settings'")
+        expect(page.locator(".notice")).to_contain_text("관리자만", timeout=10000)
+        page.evaluate("location.hash = '#/ai/reports'")
+        expect(page.locator(".tabs")).to_contain_text("검토 중", timeout=10000)
+
         # ── 거래 ──
         page.click("[data-nav=deals]")
         expect(page.locator(".col")).to_have_count(5)
@@ -95,6 +188,16 @@ def run():
         page.locator(".hit").first.click()
         expect(page.locator("#library-detail")).to_contain_text("보조 자료")
         page.screenshot(path=str(IMAGES / "app-library.png"))
+        # 중개사가 직접 자료 추가 → 질문 검색에 바로 쓰인다
+        page.click("[data-act=add-doc]")
+        page.fill("#doc-title", "E2E 용강리버뷰 확인 내용")
+        page.fill("#doc-text", "용강리버뷰 아파트는 2026년 학구도 기준 용강초 배정 구역입니다(교육지원청 확인).")
+        page.click("[data-act=add-doc-ok]")
+        expect(page.locator("#library-detail")).to_contain_text("용강초", timeout=10000)
+        expect(page.locator("[data-act=del-doc]")).to_be_visible()
+        page.fill("#lib-q", "학교 가까운 아파트")
+        page.click("[data-act=lib-ask]")
+        expect(page.locator("#ask-listings")).to_contain_text("용강초", timeout=15000)
 
         # ── 고객 → 비교표 → 승인 → 링크 ──
         page.click("[data-nav=customers]")
@@ -145,7 +248,7 @@ def run():
         expect(page.locator(".paper")).to_contain_text("공식 자료인", timeout=15000)
 
         # 모바일 가로 넘침 없음
-        for h in ("#/map", "#/deals", "#/customers", "#/library"):
+        for h in ("#/map", "#/deals", "#/customers", "#/library", "#/ai", "#/ai/usage", "#/ai/settings"):
             page.set_viewport_size({"width": 390, "height": 844})
             page.evaluate(f"location.hash = '{h}'")
             page.wait_for_timeout(500)

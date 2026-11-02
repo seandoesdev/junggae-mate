@@ -121,7 +121,10 @@ function route() {
   document.querySelectorAll(".nav a").forEach((n) => n.classList.toggle("is-active", n.dataset.nav === (name === "report" ? "customers" : name)));
   closeDrawer();
   closeDialog();
-  $(`#view-${name}`).hidden = false;
+  const view = $(`#view-${name}`);
+  view.hidden = false;
+  // 보이는 화면을 상단바 바로 뒤로: 문서에서 그 화면의 제목(h1)이 먼저 읽히도록 (보이는 모양은 같다)
+  if (view.previousElementSibling !== $("#app > .topbar")) $("#app > .topbar").after(view);
   S.view = name;
   VIEWS[name](a, b);
 }
@@ -132,7 +135,9 @@ function remember(ev) { if (ev && ev.id) S.sources[ev.id] = ev; return ev; }
 
 function srcLink(ev, label) {
   remember(ev);
-  const text = label || `${ev.type_label || TYPE_WORD[ev.type] || ""} · ${String(ev.title || "").replace(/^\[샘플\]\s*/, "")}`;
+  const title = String(ev.title || "").replace(/^\[샘플\]\s*/, "");
+  const kind = ev.type_label || TYPE_WORD[ev.type] || "";
+  const text = label || (title.includes(kind) ? title : `${kind} · ${title}`);  // 'A 마포한강뷰 59 매물 정보'처럼 종류가 제목에 있으면 한 번만
   return `<button type="button" class="srcref" data-act="source" data-src="${esc(ev.id)}">${esc(text)}</button>`;
 }
 
