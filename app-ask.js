@@ -1,8 +1,8 @@
 "use strict";
-/* 질문 검색: 상단바의 질문 버튼 → 뒤가 흐려지며 질문 창이 내려온다 → 답변(각주 출처) + 맞는 매물(지도 강조).
-   질문 창은 바깥 아무 곳이나 누르거나 Esc를 누르면 닫힌다. 결과는 지도 화면 왼쪽에 보인다. */
+/* 지도 질문 결과: Hood Chat 답변을 지도 왼쪽에 펼치고 맞는 매물을 지도에서 강조한다 (#/map/ask/질문).
+   질문 입력은 Hood Chat(상단 메뉴의 전용 화면, 이름 왼쪽 Ask Hood 패널)이 맡는다. */
 
-const ASK_EXAMPLES = ["마포구 8억 이하 59㎡ 학교 가까운 집", "공원 가까운 조용한 집", "생애최초 지원 받을 수 있는 아파트", "거래 신고는 계약 후 며칠 안에?"];
+const ASK_EXAMPLES = ["마포구 8억 이하 59㎡ 학교 가까운 집", "마포한강뷰 전세 시세와 세대수", "동탄 매물 보여줘", "거래 신고는 계약 후 며칠 안에?"];
 const askHash = (q) => `#/map/ask/${encodeURIComponent(q)}`;
 
 const RECENT_KEY = "mate_recent_questions";
@@ -10,71 +10,12 @@ const recentQuestions = () => { try { return JSON.parse(sessionStorage.getItem(R
 function rememberQuestion(q) {
   sessionStorage.setItem(RECENT_KEY, JSON.stringify([q, ...recentQuestions().filter((x) => x !== q)].slice(0, 5)));
 }
-
-// ── 질문 창 열기·닫기 ─────────────────────────────────────────
 const PICK_ICON = `<svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>`;
-const RECENT_ICON = `<svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="8"/><path d="M12 8v4l3 2"/></svg>`;
-const askLayer = () => $("#ask-layer");
-const isAskOpen = () => askLayer().classList.contains("is-open");
 
-function openAsk() {
-  const pick = (q, icon) => `<li><button type="button" class="ask-pick" data-act="ask-example" data-q="${esc(q)}">${icon}<span>${esc(q)}</span></button></li>`;
-  $("#ask-examples").innerHTML = ASK_EXAMPLES.map((q) => pick(q, PICK_ICON)).join("");
-  const recent = recentQuestions();
-  $("#ask-recent").innerHTML = recent.map((q) => pick(q, RECENT_ICON)).join("");
-  $("#ask-recent-h").hidden = !recent.length;
-  $("#ask-uses").hidden = recent.length > 0;
-  const input = $("#ask-q");
-  input.value = M.ask ? M.ask.q : "";
-  askLayer().classList.add("is-open");
-  askLayer().setAttribute("aria-hidden", "false");
-  $("#ask-trigger").setAttribute("aria-expanded", "true");
-  setTimeout(() => { input.focus(); input.select(); }, 60);
-}
-function closeAsk({ restoreFocus = true } = {}) {
-  if (!isAskOpen()) return;
-  askLayer().classList.remove("is-open");
-  askLayer().setAttribute("aria-hidden", "true");
-  $("#ask-trigger").setAttribute("aria-expanded", "false");
-  if (restoreFocus) $("#ask-trigger").focus();
-}
-/* 상단바 질문 버튼: 지금 보고 있는 질문을 보여 준다 */
-function setAskLabel() {
-  const has = !!(M.ask && location.hash.startsWith("#/map"));
-  $("#ask-trigger-label").textContent = has ? M.ask.q : "매물·법령·정책을 물어보세요";
-  $("#ask-trigger").classList.toggle("has-q", has);
-}
-ACTIONS["ask-open"] = openAsk;
-ACTIONS["ask-close"] = () => closeAsk();   // 흐린 바깥 아무 곳이나 누르면 닫힌다
+// '/' 키: 어느 화면에서든 Ask Hood 패널을 열어 바로 묻는다
 document.addEventListener("keydown", (e) => {
-  if (e.key === "Escape" && isAskOpen()) { e.preventDefault(); e.stopPropagation(); closeAsk(); return; }
   const typing = /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName) || document.activeElement?.isContentEditable;
-  if (e.key === "/" && !typing && !isAskOpen() && S.user && !$("#dialog").open) { e.preventDefault(); openAsk(); }
-}, true);
-// 질문 창 안에서 Tab이 뒤의 화면으로 빠져나가지 않게
-askLayer().addEventListener("keydown", (e) => {
-  if (e.key !== "Tab") return;
-  const f = [...askLayer().querySelectorAll("input, button")].filter((x) => x.offsetParent !== null);
-  if (!f.length) return;
-  if (e.shiftKey && document.activeElement === f[0]) { e.preventDefault(); f.at(-1).focus(); }
-  else if (!e.shiftKey && document.activeElement === f.at(-1)) { e.preventDefault(); f[0].focus(); }
-});
-addEventListener("hashchange", () => { closeAsk({ restoreFocus: false }); setAskLabel(); });
-
-function ask(q) {
-  rememberQuestion(q);
-  closeAsk({ restoreFocus: false });
-  if (location.hash === askHash(q)) { M.ask = null; route(); }   // 같은 질문을 다시 누르면 새로 찾는다
-  else location.hash = askHash(q);
-}
-
-document.addEventListener("submit", (e) => {
-  if (e.target.id !== "ask-form") return;
-  e.preventDefault();
-  const input = $("#ask-q");
-  const q = input.value.trim();
-  if (!q) { input.focus(); return; }
-  ask(q);
+  if (e.key === "/" && !typing && S.user && !$("#dialog").open) { e.preventDefault(); setPanel(true, "thread"); }
 });
 
 /* 같은 질문으로 돌아올 때(매물 상세 → 질문 결과)는 뺀 조건과 결과를 그대로 쓴다. */
@@ -85,7 +26,6 @@ async function loadAsk(q, drop) {
   if (M.ask && M.ask.key === key) return M.ask;
   const prev = M.ask && M.ask.q === q ? M.ask : null;
   const seq = (M.askSeq = (M.askSeq || 0) + 1);
-  $("#ask-q").value = q;
   $("#map-side").innerHTML = `<p class="loading">찾는 중…</p>`;
   try {
     const result = await api("POST", "/search", { q, drop, session_id: prev ? prev.result.session_id : undefined });
@@ -107,9 +47,8 @@ function renderAsk() {
   const foot = order.map((id) => byId[id]).filter(Boolean);
   const live = Object.fromEntries(M.listings.map((l) => [l.id, l]));   // 단계는 지금 상태로
   const ls = r.listings;
-  setAskLabel();
   $("#map-side").innerHTML = `
-    <div class="side-h"><h1>질문 결과</h1><span><button type="button" class="btn btn--sm" data-act="ask-open">다시 묻기</button>
+    <div class="side-h"><h1>질문 결과</h1><span>${r.session_id ? `<a class="btn btn--sm" href="#/ai/s/${r.session_id}">Hood Chat에서 이어 묻기</a>` : ""}
       <button type="button" class="btn btn--sm" data-act="clear-ask">닫기</button></span></div>
     <div class="ask-res">
       <p class="ask-q">${esc(q)}</p>
@@ -156,8 +95,7 @@ async function rerunAsk(drop) {
 ACTIONS["ask-drop"] = (el) => rerunAsk([...M.ask.drop, el.dataset.key]);
 ACTIONS["ask-reset"] = () => rerunAsk([]);
 ACTIONS["ask-drop-all"] = () => rerunAsk([...new Set([...M.ask.drop, ...M.ask.result.understood.map((c) => c.key)])]);
-ACTIONS["clear-ask"] = () => { M.ask = null; $("#ask-q").value = ""; setAskLabel(); location.hash = "#/map"; };
-ACTIONS["ask-example"] = (el) => ask(el.dataset.q);
+ACTIONS["clear-ask"] = () => { M.ask = null; location.hash = "#/map"; };
 
 ACTIONS["ask-report"] = async (el) => {
   const q = el?.dataset.q || M.ask.q;

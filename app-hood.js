@@ -1,9 +1,15 @@
 "use strict";
-/* Hood AI: 전용 검색 화면(#/ai), 보고서·사용량·설정, 어느 화면에서든 여는 오른쪽 Ask Hood 패널, 이전 대화(시계).
-   질문 하나는 /api/search가 답하고 대화(세션)에 쌓인다. 패널과 전용 화면은 같은 '지금 대화'를 보여 준다. */
+/* Hood AI: 전용 화면(#/ai: 채팅·보고서·사용량·설정)과 어느 화면에서든 여는 오른쪽 Ask Hood 패널(시계로 이전 대화).
+   질문 하나는 /api/search가 답하고 대화(세션)에 쌓인다. 전용 화면과 패널은 각자의 대화를 가진다:
+   상단 Hood AI를 누르면 늘 새 대화로 시작하고, 패널에서 하던 대화는 패널에 남는다. 둘 다 '이전 대화' 목록에 쌓인다. */
 
-const H = { sid: null, title: "", turns: [], sessions: [], pending: null, panel: false, panelView: "thread", maps: [], page: null };
+const H = { sessions: [], panel: false, panelView: "thread", maps: [], page: null };
+const blankConv = () => ({ sid: null, title: "", turns: [], pending: null });
+// main: 전용 화면의 대화, side: Ask Hood 패널의 대화. 새 대화는 객체를 바꿔 끼워, 늦게 온 이전 답이 새 대화에 섞이지 않게 한다
+const CONV = { main: blankConv(), side: blankConv() };
+const convOf = (el) => (el.closest("#hood-panel") ? CONV.side : CONV.main);
 const TYPE_NAME = { data: "매물·실거래가", law: "법령", policy: "정책", office: "사무소 자료", news: "기사" };
+const ROUTE_NAME = { listing: "매물", trade: "매매 실거래가", rent: "전월세 실거래가", complex: "단지(K-apt)", building: "건축물대장", station: "지하철 노선", document: "법령·정책·자료" };
 const STATE_NAME = { draft: "작성 중", review: "검토 중", approved: "승인", shared: "전달됨" };
 
 const when = (iso) => {
@@ -20,27 +26,28 @@ async function loadSessions() {
   try { H.sessions = await api("GET", "/ai/sessions"); } catch { H.sessions = []; }
   renderHistory();
 }
-async function openSession(id) {
+async function loadConv(id) {
   const s = await api("GET", `/ai/sessions/${id}`);
-  H.sid = s.id; H.title = s.title; H.turns = s.messages; H.pending = null;
+  return { sid: s.id, title: s.title, turns: s.messages, pending: null };
 }
-function newSession() { H.sid = null; H.title = ""; H.turns = []; H.pending = null; }
 
-async function hoodAsk(q, { drop = [], replace = false } = {}) {
-  if (H.pending) return;
-  H.pending = replace ? null : q;
+async function hoodAsk(conv, q, { drop = [], replace = false, news = H.news !== false } = {}) {
+  if (conv.pending) return;
+  conv.pending = replace ? null : q;
   renderAll();
   try {
-    const r = await api("POST", "/search", { q, drop, session_id: H.sid || undefined });
-    const i = H.turns.findIndex((t) => t.message_id === r.message_id);
-    if (i >= 0) H.turns[i] = r; else H.turns.push(r);
-    if (!H.sid) H.title = q;
-    H.sid = r.session_id;
+    const r = await api("POST", "/search", { q, drop, session_id: conv.sid || undefined, exclude_types: news ? [] : ["news"] });
+    const i = conv.turns.findIndex((t) => t.message_id === r.message_id);
+    if (i >= 0) conv.turns[i] = r; else conv.turns.push(r);
+    if (!conv.sid) conv.title = q;
+    conv.sid = r.session_id;
   } catch (e) { toast(e.message, 4800); }
-  finally { H.pending = null; }
+  finally { conv.pending = null; }
   renderAll();
   loadSessions();
-  if (S.view === "ai" && H.page === "search" && H.sid && location.hash !== `#/ai/s/${H.sid}`) history.replaceState(null, "", `#/ai/s/${H.sid}`);
+  if (conv === CONV.main && S.view === "ai" && H.page === "search" && conv.sid && location.hash !== `#/ai/s/${conv.sid}`) {
+    history.replaceState(null, "", `#/ai/s/${conv.sid}`);
+  }
 }
 
 // ── 답변 한 칸 ─────────────────────────────────────────
@@ -87,8 +94,8 @@ function turnHtml(t, idx, compact) {
   </article>`;
 }
 
-const pendingHtml = () => (H.pending ? `<article class="turn is-pending"><p class="turn-q">${esc(H.pending)}</p><p class="loading" style="padding:8px 0">매물·실거래가·법령·정책·자료를 찾는 중…</p></article>` : "");
-const threadHtml = (compact) => H.turns.map((t, i) => turnHtml(t, i, compact)).join("") + pendingHtml();
+const pendingHtml = (conv) => (conv.pending ? `<article class="turn is-pending"><p class="turn-q">${esc(conv.pending)}</p><p class="loading" style="padding:8px 0">매물·실거래가·법령·정책·자료를 찾는 중…</p></article>` : "");
+const threadHtml = (conv, compact) => conv.turns.map((t, i) => turnHtml(t, i, compact)).join("") + pendingHtml(conv);
 
 /* 답변 안의 작은 지도: 맞는 매물과 질문한 지역 */
 function drawTurnMaps(root) {
@@ -96,14 +103,17 @@ function drawTurnMaps(root) {
   H.maps = [];
   if (typeof window.L === "undefined") return;
   root.querySelectorAll(".turn-map").forEach((el) => {
-    const t = H.turns[Number(el.dataset.i)];
-    const map = L.map(el, { zoomControl: false, scrollWheelZoom: false, attributionControl: false });
+    const t = CONV.main.turns[Number(el.dataset.i)];
+    // 만들자마자 위치를 정해 둔다 (위치가 없는 지도에는 도형이 바로 붙지 않아 범위 계산이 실패한다)
+    const map = L.map(el, { zoomControl: false, scrollWheelZoom: false, attributionControl: false })
+      .setView(t.place ? [t.place.lat, t.place.lng] : [37.547, 126.951], 13);
     L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom: 19 }).addTo(map);
     const pts = [];
     if (t.place) {
       if (t.place.radius_m) {
-        const c = L.circle([t.place.lat, t.place.lng], { radius: t.place.radius_m, color: "#1b6c80", weight: 1.5, dashArray: "4 4", fillOpacity: 0.06, interactive: false }).addTo(map);
-        pts.push(c.getBounds().getSouthWest(), c.getBounds().getNorthEast());
+        L.circle([t.place.lat, t.place.lng], { radius: t.place.radius_m, color: "#1b6c80", weight: 1.5, dashArray: "4 4", fillOpacity: 0.06, interactive: false }).addTo(map);
+        const box = L.latLng(t.place.lat, t.place.lng).toBounds(t.place.radius_m * 2);
+        pts.push(box.getSouthWest(), box.getNorthEast());
       } else pts.push(L.latLng(t.place.lat, t.place.lng));
       if (!t.listings.length) {
         L.marker([t.place.lat, t.place.lng], { interactive: false, icon: L.divIcon({ className: "pin-wrap", html: `<div class="place-tag">${esc(t.place.name)} · 등록된 매물 없음</div>`, iconSize: [0, 0] }) }).addTo(map);
@@ -128,10 +138,19 @@ function renderAll() {
   if (H.panel) renderPanel();
 }
 
-function composer(id, placeholder) {
-  return `<form class="composer" id="${id}" autocomplete="off">
-    <textarea rows="1" maxlength="500" aria-label="Hood에게 질문" placeholder="${esc(placeholder)}"></textarea>
-    <button type="submit" class="composer-go" ${H.pending ? "disabled" : ""}>찾기</button></form>`;
+const CLIP_ICON = `<svg viewBox="0 0 24 24" fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m20.5 11.5-8.2 8.2a5 5 0 0 1-7.1-7.1l8.6-8.6a3.4 3.4 0 0 1 4.8 4.8l-8.6 8.6a1.7 1.7 0 0 1-2.4-2.4l7.9-7.9"/></svg>`;
+const SEND_ICON = `<svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 19V5M6 11l6-6 6 6"/></svg>`;
+const SPARK_ICON = `<svg viewBox="0 0 24 24" fill="none" stroke-width="1.8" stroke-linejoin="round" aria-hidden="true"><path d="M12 3.5l1.9 5.2 5.1 1.9-5.1 1.9L12 17.7l-1.9-5.2L5 10.6l5.1-1.9z"/></svg>`;
+
+/* 입력창: 여러 줄 질문 + 아래 줄에 '자료 추가'(Hood가 근거로 쓸 사무소 자료), '기사 포함' 토글, 보내기 */
+function composer(id, placeholder, size = "", conv = CONV.main) {
+  return `<form class="composer ${size}" id="${id}" autocomplete="off">
+    <textarea rows="${size === "composer--lg" ? 3 : 1}" maxlength="500" aria-label="Hood에게 질문" placeholder="${esc(placeholder)}"></textarea>
+    <div class="composer-bar">
+      <button type="button" class="icon-btn" data-act="add-doc" aria-label="자료 추가 (Hood가 근거로 쓸 사무소 자료)" title="자료 추가">${CLIP_ICON}</button>
+      <label class="composer-toggle"><input type="checkbox" name="news" ${H.news === false ? "" : "checked"} /><span class="track" aria-hidden="true"></span>기사 포함</label>
+      <button type="submit" class="composer-send" aria-label="보내기" ${conv.pending ? "disabled" : ""}>${SEND_ICON}</button>
+    </div></form>`;
 }
 
 /* 다시 그려도 입력하던 질문은 남긴다 */
@@ -148,15 +167,17 @@ function renderSearchPage() {
 }
 
 function drawSearchPage(main) {
-  main.classList.toggle("is-thread", H.turns.length > 0 || !!H.pending);
-  if (!H.turns.length && !H.pending) {
+  const c = CONV.main;
+  main.classList.toggle("is-thread", c.turns.length > 0 || !!c.pending);
+  if (!c.turns.length && !c.pending) {
     H.maps.forEach((m) => m.remove());
     H.maps = [];
     main.innerHTML = `
       <div class="ai-start">
-        <h1>Hood AI</h1>
-        <p class="sub">매물·현장 메모, 실거래가, 법령·정책, 사무소 자료, 기사에서 찾아 문장마다 출처를 붙여 답합니다.</p>
-        ${composer("ai-form", "예: 마포구 8억 이하 59㎡ 학교 가까운 집")}
+        <p class="hood-kicker">${SPARK_ICON}<span>Hood Chat</span><b class="hood-new">NEW</b></p>
+        <h1 class="hood-hello">안녕하세요, <span>${esc(S.user.name)}</span></h1>
+        ${composer("ai-form", "매물·실거래가·전월세·법령을 물어보세요", "composer--lg")}
+        <p class="ai-sub">매물·현장 메모, 매매·전월세 실거래가, 단지·건축물·지하철 공공데이터, 법령·정책, 사무소 자료, 기사에서 찾아 문장마다 출처를 붙입니다.</p>
         <ul class="ai-examples">${ASK_EXAMPLES.map((q) => `<li><button type="button" class="ask-pick" data-act="hood-example" data-q="${esc(q)}">${PICK_ICON}<span>${esc(q)}</span></button></li>`).join("")}</ul>
         <p class="ai-tip">답을 받은 뒤 <b>그중 7억 이하만</b>처럼 이어서 물으면 앞 조건에 더해 찾습니다.</p>
         ${H.sessions.length ? `<section class="ai-recent"><h2>최근 대화</h2><ul>${H.sessions.slice(0, 4).map((s) => `<li><a href="#/ai/s/${s.id}">
@@ -164,24 +185,24 @@ function drawSearchPage(main) {
       </div>`;
   } else {
     main.innerHTML = `
-      <header class="ai-thread-h"><h1>${esc(H.title || "새 대화")}</h1><span class="muted">질문 ${H.turns.length}개${H.turns.length ? ` · ${when(H.turns.at(-1).asked_at)}` : ""}</span></header>
-      <div class="ai-thread" id="ai-thread">${threadHtml(false)}</div>
+      <header class="ai-thread-h"><h1>${esc(c.title || "새 대화")}</h1><span class="muted">질문 ${c.turns.length}개${c.turns.length ? ` · ${when(c.turns.at(-1).asked_at)}` : ""}</span></header>
+      <div class="ai-thread" id="ai-thread">${threadHtml(c, false)}</div>
       <div class="ai-dock">${composer("ai-form", "이어서 물어보세요 (예: 그중 7억 이하만)")}</div>`;
     drawTurnMaps(main);
     const th = $("#ai-thread");
     th.scrollTop = th.scrollHeight;
   }
-  if (!H.pending) main.querySelector("#ai-form textarea")?.focus({ preventScroll: true });
+  if (!c.pending) main.querySelector("#ai-form textarea")?.focus({ preventScroll: true });
 }
 
 function renderHistory() {
   const items = H.sessions.map((s) => `
-    <li class="${s.id === H.sid ? "is-cur" : ""}"><a href="#/ai/s/${s.id}"><span class="h-title">${esc(s.title)}</span>
+    <li class="${s.id === CONV.main.sid ? "is-cur" : ""}"><a href="#/ai/s/${s.id}"><span class="h-title">${esc(s.title)}</span>
       <span class="h-meta">${when(s.updated_at)} · 질문 ${s.messages}개</span></a>
       <button type="button" class="h-del" data-act="hood-del" data-sid="${s.id}" aria-label="${esc(s.title)} 대화 지우기" title="지우기">×</button></li>`).join("");
   const rail = $("#ai-history");
   if (rail) rail.innerHTML = items || `<li class="h-empty">아직 대화가 없습니다.</li>`;
-  if (S.view === "ai" && H.page === "search" && !H.turns.length && !H.pending && !$(".ai-recent") && H.sessions.length) renderSearchPage();
+  if (S.view === "ai" && H.page === "search" && !CONV.main.turns.length && !CONV.main.pending && !$(".ai-recent") && H.sessions.length) renderSearchPage();
   if (H.panel && H.panelView === "history") renderPanel();
 }
 
@@ -191,9 +212,11 @@ VIEWS.ai = async (a, b) => {
   H.page = page;
   document.querySelectorAll(".ai-nav a").forEach((x) => x.classList.toggle("is-active", x.dataset.ai === page));
   loadSessions();
-  if (a === "s" && b && Number(b) !== H.sid) {
+  if (a === "s" && b && Number(b) !== CONV.main.sid) {
     $("#ai-main").innerHTML = `<p class="loading">대화를 불러오는 중…</p>`;
-    try { await openSession(Number(b)); } catch (e) { toast(e.message); location.hash = "#/ai"; return; }
+    try { CONV.main = await loadConv(Number(b)); } catch (e) { toast(e.message); location.hash = "#/ai"; return; }
+  } else if (page === "search" && a !== "s") {
+    CONV.main = blankConv();   // 상단 Hood AI(#/ai)로 들어오면 늘 새 대화. 하던 대화는 이전 대화 목록에서 다시 연다
   }
   if (page === "search") renderSearchPage();
   else if (page === "reports") renderReports(b);
@@ -220,30 +243,36 @@ document.addEventListener("submit", (e) => {
   const ta = form.querySelector("textarea");
   const q = ta.value.trim();
   if (!q) { ta.focus(); return; }
-  if (H.pending) { toast("앞 질문의 답을 찾는 중입니다. 답이 나온 뒤 보내 주세요."); return; }   // 적은 질문은 지우지 않는다
+  const conv = convOf(form);
+  if (conv.pending) { toast("앞 질문의 답을 찾는 중입니다. 답이 나온 뒤 보내 주세요."); return; }   // 적은 질문은 지우지 않는다
   ta.value = "";
   ta.style.height = "auto";
   rememberQuestion(q);
-  hoodAsk(q);
+  H.news = form.news ? form.news.checked : H.news;
+  hoodAsk(conv, q);
+});
+document.addEventListener("change", (e) => {
+  if (e.target.matches(".composer [name=news]")) H.news = e.target.checked;   // 다른 입력창에도 같은 선택을 보여 준다
 });
 
-const turnAt = (el) => H.turns[Number(el.dataset.i)];
-ACTIONS["hood-example"] = (el) => { rememberQuestion(el.dataset.q); hoodAsk(el.dataset.q); };
-ACTIONS["hood-drop"] = (el) => { const t = turnAt(el); hoodAsk(t.question, { drop: [...(t.dropped || []), el.dataset.key], replace: true }); };
-ACTIONS["hood-undrop"] = (el) => hoodAsk(turnAt(el).question, { drop: [], replace: true });
-ACTIONS["hood-drop-all"] = (el) => { const t = turnAt(el); hoodAsk(t.question, { drop: [...new Set([...(t.dropped || []), ...t.understood.map((c) => c.key)])], replace: true }); };
+const turnAt = (el) => convOf(el).turns[Number(el.dataset.i)];
+ACTIONS["hood-example"] = (el) => { rememberQuestion(el.dataset.q); hoodAsk(convOf(el), el.dataset.q); };
+ACTIONS["hood-drop"] = (el) => { const t = turnAt(el); hoodAsk(convOf(el), t.question, { drop: [...(t.dropped || []), el.dataset.key], replace: true }); };
+ACTIONS["hood-undrop"] = (el) => hoodAsk(convOf(el), turnAt(el).question, { drop: [], replace: true });
+ACTIONS["hood-drop-all"] = (el) => { const t = turnAt(el); hoodAsk(convOf(el), t.question, { drop: [...new Set([...(t.dropped || []), ...t.understood.map((c) => c.key)])], replace: true }); };
 ACTIONS["hood-map"] = (el) => {
   // 답변을 그대로 지도 질문 결과로 넘긴다 (다시 묻지 않는다)
   const t = turnAt(el), q = t.effective_query || t.question, drop = t.dropped || [];
   M.ask = { q, drop, key: `${q}|${drop.join(",")}`, result: t };
   location.hash = askHash(q);
 };
-ACTIONS["hood-new-page"] = () => { newSession(); renderHistory(); if (location.hash === "#/ai") renderSearchPage(); else location.hash = "#/ai"; };
+ACTIONS["hood-new-page"] = () => { CONV.main = blankConv(); renderHistory(); if (location.hash === "#/ai") renderSearchPage(); else location.hash = "#/ai"; };
 ACTIONS["hood-del"] = async (el) => {
   if (!confirm("이 대화를 지울까요?")) return;
   const id = Number(el.dataset.sid);
   if (!(await busy(el, () => api("DELETE", `/ai/sessions/${id}`)))) return;
-  if (H.sid === id) { newSession(); if (S.view === "ai" && H.page === "search") { history.replaceState(null, "", "#/ai"); renderSearchPage(); } if (H.panel) renderPanel(); }
+  if (CONV.main.sid === id) { CONV.main = blankConv(); if (S.view === "ai" && H.page === "search") { history.replaceState(null, "", "#/ai"); renderSearchPage(); } }
+  if (CONV.side.sid === id) { CONV.side = blankConv(); if (H.panel) renderPanel(); }
   loadSessions();
 };
 
@@ -260,37 +289,39 @@ function setPanel(open, view = H.panelView) {
 
 function renderPanel() {
   const body = $("#hood-body");
-  $("#hood-expand").setAttribute("href", H.sid ? `#/ai/s/${H.sid}` : "#/ai");
+  const c = CONV.side;
+  $("#hood-expand").setAttribute("href", c.sid ? `#/ai/s/${c.sid}` : "#/ai");
   document.querySelectorAll('#hood-panel [data-act="hood-history"]').forEach((b) => b.setAttribute("aria-pressed", String(H.panelView === "history")));
   if (H.panelView === "history") {
     body.innerHTML = `<div class="hood-hist"><h3>이전 대화</h3>
-      <ul>${H.sessions.map((s) => `<li class="${s.id === H.sid ? "is-cur" : ""}"><button type="button" data-act="hood-load" data-sid="${s.id}">
+      <ul>${H.sessions.map((s) => `<li class="${s.id === c.sid ? "is-cur" : ""}"><button type="button" data-act="hood-load" data-sid="${s.id}">
         <span class="h-title">${esc(s.title)}</span><span class="h-meta">${when(s.updated_at)} · 질문 ${s.messages}개${s.last_question && s.messages > 1 ? ` · 마지막: ${esc(s.last_question)}` : ""}</span></button></li>`).join("")
         || `<li class="h-empty">아직 대화가 없습니다. 아래에 질문을 적어 보세요.</li>`}</ul></div>`;
     return;
   }
-  body.innerHTML = H.turns.length || H.pending ? threadHtml(true)
-    : `<div class="hood-empty"><p>보고 있는 화면을 떠나지 않고 물어볼 수 있습니다. 답은 이전 대화에 남습니다.</p>
+  body.innerHTML = c.turns.length || c.pending ? threadHtml(c, true)
+    : `<div class="hood-empty"><p class="hood-hello hood-hello--sm">안녕하세요, <span>${esc(S.user.name)}</span></p>
+        <p>보고 있는 화면을 떠나지 않고 물어볼 수 있습니다. 답은 이전 대화에 남습니다.</p>
         <ul>${ASK_EXAMPLES.slice(0, 3).map((q) => `<li><button type="button" class="ask-pick" data-act="hood-example" data-q="${esc(q)}">${PICK_ICON}<span>${esc(q)}</span></button></li>`).join("")}</ul></div>`;
   body.scrollTop = body.scrollHeight;
-  $("#hood-form .composer-go").disabled = !!H.pending;
+  $("#hood-form .composer-send").disabled = !!c.pending;
+  const tg = $("#hood-form [name=news]");
+  if (tg) tg.checked = H.news !== false;
 }
 
 ACTIONS["hood-toggle"] = () => setPanel(!H.panel, "thread");
 ACTIONS["hood-close"] = () => setPanel(false);
 ACTIONS["hood-history"] = () => {
-  // 상단바의 시계: 패널을 이전 대화 목록으로 연다. 패널 안의 시계: 목록과 대화를 오간다
+  // 패널 안의 시계: 이전 대화 목록과 지금 대화를 오간다
   if (H.panel && H.panelView === "history") setPanel(true, "thread"); else setPanel(true, "history");
 };
-ACTIONS["hood-new"] = () => { newSession(); setPanel(true, "thread"); if (S.view === "ai" && H.page === "search") renderSearchPage(); };
+ACTIONS["hood-new"] = () => { CONV.side = blankConv(); setPanel(true, "thread"); };
 ACTIONS["hood-load"] = async (el) => {
-  try { await openSession(Number(el.dataset.sid)); } catch (e) { toast(e.message); return; }
+  try { CONV.side = await loadConv(Number(el.dataset.sid)); } catch (e) { toast(e.message); return; }
   setPanel(true, "thread");
-  renderHistory();
-  if (S.view === "ai" && H.page === "search") renderSearchPage();
 };
 document.addEventListener("keydown", (e) => {
-  if (e.key === "Escape" && H.panel && !$("#ask-layer").classList.contains("is-open") && $("#drawer").hidden && !$("#dialog").open) setPanel(false);
+  if (e.key === "Escape" && H.panel && $("#drawer").hidden && !$("#dialog").open) setPanel(false);
 });
 
 // ── 보고서 ─────────────────────────────────────────
@@ -389,6 +420,10 @@ async function renderUsage() {
             <ul class="barlist">${u.by_source_type.map((x) => `<li><span>${TYPE_NAME[x.type] || esc(x.type)}</span><span class="num">${x.count}</span><i style="width:${(x.count / maxType) * 100}%"></i></li>`).join("")}</ul></section>
         </div>
       </div>
+      <section class="card route-card"><div class="card-h"><h2>검색 경로</h2>
+          <span class="muted">${u.traces ? `이번 달 ${u.traces}건 · 평균 응답 ${u.latency_avg_ms}ms · p95 ${u.latency_p95_ms}ms · 오래된 공공데이터를 쓴 답변 ${u.stale_answers}건` : "이번 달 기록 없음"}</span></div>
+        ${u.by_route.length ? `<ul class="barlist barlist--cols">${u.by_route.map((x) => `<li><span>${ROUTE_NAME[x.route] || esc(x.route)}</span><span class="num">${x.count}</span><i style="width:${(x.count / Math.max(...u.by_route.map((y) => y.count))) * 100}%"></i></li>`).join("")}</ul>`
+          : `<p class="empty-box">질문을 하면 매물·실거래가·전월세·단지·건축물·노선·문서 중 어떤 경로를 썼는지 여기에 쌓입니다.</p>`}</section>
     </div>`;
 }
 

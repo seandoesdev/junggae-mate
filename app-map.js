@@ -4,10 +4,14 @@
 const M = {
   scope: "mine", hidden: new Set(), match: null, matchIds: null, ask: null,
   map: null, markers: {}, listings: [], fittedFor: null,
-  pick: false, temp: null, detailId: null,
+  pick: false, temp: null, detailId: null, scopeUser: null,
 };
 
 VIEWS.map = async (a, b) => {
+  if (M.scopeUser !== S.user.id) {
+    setMapScope(S.user.role === "admin" ? "all" : "mine", false);
+    M.scopeUser = S.user.id;
+  }
   // 매물을 받기 전에도 화면 제목이 먼저 보이도록 (불러오는 동안의 모양)
   if (!$("#map-side").querySelector("h1, .detail")) $("#map-side").innerHTML = `<div class="side-h"><h1>매물</h1></div><p class="loading">불러오는 중…</p>`;
   M.match = null;
@@ -102,7 +106,7 @@ function drawPlace() {
   if (p.radius_m) {
     const c = L.circle([p.lat, p.lng], { radius: p.radius_m, color: "#1b6c80", weight: 1.5, dashArray: "4 4", fillColor: "#1b6c80", fillOpacity: 0.06, interactive: false });
     c.addTo(M.placeLayer);
-    bounds = c.getBounds();
+    bounds = L.latLng(p.lat, p.lng).toBounds(p.radius_m * 2);   // 지도 상태와 무관하게 좌표로 계산
   }
   L.marker([p.lat, p.lng], { interactive: false, keyboard: false,
     icon: L.divIcon({ className: "pin-wrap", html: `<div class="place-tag">${esc(label)}</div>`, iconSize: [0, 0] }) }).addTo(M.placeLayer);
@@ -215,6 +219,9 @@ async function renderDetail(id) {
           <button type="submit" class="btn btn--sm">남기기</button></form>
       </div>
 
+      <div class="sec" id="pub-sec" data-id="${l.id}"><div class="sec-h"><h2>공공데이터</h2><span class="muted">Hood 답변·비교표의 근거</span></div>
+        <p class="loading" style="padding:4px 0">불러오는 중…</p></div>
+
       <div class="sec"><div class="sec-h"><h2>매물 정보</h2><span class="muted">담당 ${esc(l.agent_name)}</span></div>
         <dl class="kv">
           <dt>전용면적</dt><dd class="num">${l.area_m2}㎡</dd><dt>층</dt><dd>${esc(l.floor || "-")}</dd>
@@ -229,7 +236,77 @@ async function renderDetail(id) {
       </div>
     </div>`;
   M.current = l;
+  loadPublic(l.id);
 }
+
+// ── 공공데이터: 단지(K-apt)·지하철역·건축물대장 연결과 전월세 ─────────────────────────
+const PUB_KINDS = [["complex", "단지"], ["station", "지하철역"], ["building", "건축물대장"]];
+
+async function loadPublic(id) {
+  let p;
+  try { p = await api("GET", `/listings/${id}/public`); }
+  catch (e) {
+    const failed = $(`#pub-sec[data-id="${id}"]`);
+    if (failed && M.detailId === id) failed.innerHTML = `<div class="sec-h"><h2>공공데이터</h2><span class="muted">Hood 답변·비교표의 근거</span></div>
+      <div class="pub-error" role="alert"><p>공공데이터를 불러오지 못했습니다.</p><span>${esc(e.message)}</span>
+        <button type="button" class="btn btn--sm" data-act="pub-retry" data-id="${id}">다시 시도</button></div>`;
+    return;
+  }
+  const sec = $(`#pub-sec[data-id="${id}"]`);
+  if (!sec || M.detailId !== id) return;
+  const stale = (ev) => (ev.state === "stale" ? `<span class="pill pill--warn">오래된 수집본</span>` : ev.state === "warning" ? `<span class="pill pill--warn">표본 적음</span>` : "");
+  const meta = (ev) => `<span class="pub-meta">${srcLink(ev, "출처")}<span>${esc(ev.date)} 수집</span>${stale(ev)}</span>`;
+  const row = ([kind, word]) => {
+    const f = p.facts[kind], link = p.links[kind], cands = p.candidates[kind] || [];
+    if (f) {
+      return `<dt>${word}</dt><dd><span class="pub-v">${esc(f.evidence.snippet)}</span>${meta(f.evidence)}
+        ${p.can_edit ? `<span class="pub-meta">${esc(link.confirmed_by || "")} 연결 · <button type="button" class="unlink" data-act="pub-unlink" data-id="${id}" data-kind="${kind}">연결 해제</button></span>` : ""}</dd>`;
+    }
+    if (!cands.length) return `<dt>${word}</dt><dd><span class="pub-none">수집된 ${word} 정보가 없습니다.</span></dd>`;
+    if (!p.can_edit) return `<dt>${word}</dt><dd><span class="pub-none">아직 연결하지 않았습니다 (매물 담당이 연결).</span></dd>`;
+    if (kind === "station") return `<dt>${word}</dt><dd><fieldset class="pub-stations" data-kind="station">
+        <legend>연결할 지하철 노선</legend><div class="pub-station-list">
+          ${cands.map((c, i) => `<label for="station-${id}-${i}"><input type="checkbox" id="station-${id}-${i}" name="station_ids" value="${esc(c.entity_key)}" />
+            <span><b>${esc(c.label)}</b>${c.detail ? `<small>${esc(c.detail)}</small>` : ""}</span></label>`).join("")}</div></fieldset>
+        <span class="pub-link"><button type="button" class="btn btn--sm" data-act="pub-link" data-id="${id}" data-kind="station">선택한 노선 연결</button></span>
+        <span class="pub-meta">같은 환승역으로 확인한 노선을 모두 선택하세요. 최소 1개가 필요합니다.</span></dd>`;
+    return `<dt>${word}</dt><dd><span class="pub-link"><select aria-label="연결할 ${word}" data-kind="${kind}">
+        ${cands.map((c) => `<option value="${esc(c.entity_key)}">${esc(c.label)}${c.detail ? ` · ${esc(c.detail)}` : ""}</option>`).join("")}</select>
+        <button type="button" class="btn btn--sm" data-act="pub-link" data-id="${id}" data-kind="${kind}">연결</button></span>
+        <span class="pub-meta">이름이 비슷한 후보입니다. 맞는 것을 골라 확정하세요.</span></dd>`;
+  };
+  const rent = p.facts.rent;
+  sec.innerHTML = `<div class="sec-h"><h2>공공데이터</h2><span class="muted">Hood 답변·비교표의 근거</span></div>
+    <dl class="pub">${PUB_KINDS.map(row).join("")}
+      <dt>전월세</dt><dd>${rent ? `<span class="pub-v">${esc(rent.evidence.snippet)}</span>${meta(rent.evidence)}` : `<span class="pub-none">최근 12개월 같은 단지·비슷한 면적 신고가 없거나 아직 수집 전입니다.</span>`}</dd></dl>`;
+}
+ACTIONS["pub-retry"] = (el) => {
+  const sec = $(`#pub-sec[data-id="${el.dataset.id}"]`);
+  if (sec) sec.innerHTML = `<div class="sec-h"><h2>공공데이터</h2><span class="muted">Hood 답변·비교표의 근거</span></div><p class="loading" style="padding:4px 0">다시 불러오는 중…</p>`;
+  loadPublic(Number(el.dataset.id));
+};
+ACTIONS["pub-link"] = async (el) => {
+  let entityKey;
+  if (el.dataset.kind === "station") {
+    const checks = [...el.closest("dd").querySelectorAll('input[name="station_ids"]')];
+    const selected = checks.filter((input) => input.checked).map((input) => input.value);
+    if (!selected.length) {
+      toast("연결할 지하철 노선을 1개 이상 선택해 주세요.");
+      checks[0]?.focus();
+      return;
+    }
+    entityKey = `station_ids:${selected.join(",")}`;
+  } else {
+    entityKey = el.closest("dd").querySelector("select").value;
+  }
+  const r = await busy(el, () => api("PUT", `/listings/${el.dataset.id}/links/${el.dataset.kind}`, { entity_key: entityKey }));
+  if (r) { toast(`${r.label} 연결했습니다. Hood 답변과 비교표에 쓰입니다.`); loadPublic(Number(el.dataset.id)); }
+};
+ACTIONS["pub-unlink"] = async (el) => {
+  if (!confirm("이 연결을 해제할까요?")) return;
+  const r = await busy(el, () => api("DELETE", `/listings/${el.dataset.id}/links/${el.dataset.kind}`));
+  if (r) loadPublic(Number(el.dataset.id));
+};
 
 // ── 거래 단계 ─────────────────────────────────────────
 async function changeStage(btn, dealId, stage, reason) {
