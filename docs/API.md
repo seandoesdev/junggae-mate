@@ -1,4 +1,4 @@
-# 중개메이트 API 계약 v0.5
+# 중개메이트 API 계약 v0.6
 
 Base `/api`. 인증이 필요한 요청은 `Authorization: Bearer <token>`. tenant(사무소)는 토큰으로만 결정한다.
 오류: `{"detail": "...", "code": "..."}` (입력 검증 오류 422는 `detail`이 `[{loc, msg, type}]` 배열). 모든 응답에 `X-Request-ID`.
@@ -29,6 +29,8 @@ listing: `{id, label, title, complex_name, address, district, price, area_m2, fl
 - `GET /listings/{id}` → `{listing, trade_reference, deals: [deal], checks: [check], notes: [note]}`
 - `POST /listings/{id}/notes` `{text}` → note `{id, text, by, user_id, created_at}`. 사무소 누구나. 질문 검색에서 매물을 찾을 때 함께 본다.
 - `DELETE /listings/{id}/notes/{note_id}` → `{deleted}`. 쓴 사람·관리자만.
+- `GET /listings/{id}/public` → `{links: {complex|building|station: {entity_key, label, match_method, confidence, confirmed_by, confirmed_at}}, candidates: {complex|building|station: [{entity_key, label, detail, score}]}, facts: {rent|complex|building|station: {value, evidence} | null}, can_edit}`. 저장된 공공 캐시만 읽는다(외부 API 호출 없음).
+- `PUT /listings/{id}/links/{complex|building|station}` `{entity_key}` → link. 후보 중 하나를 사람이 확정(자동 확정 없음). 매물 담당·관리자만, 캐시에 없는 키는 422. `DELETE`로 해제.
   - trade_reference: `{median_price, count, period, source, as_of} | null` (과거 신고 거래, 현재 호가 아님)
   - **check** (확인할 사항, 문서 근거 검색으로 출처를 붙임): `{key, text, level: "normal"|"warn"|"urgent", checked, checked_by, checked_at, sources: [evidence]}`
 - `PUT /listings/{id}/checks/{key}` `{checked: bool}` → check
@@ -87,7 +89,7 @@ report_summary: `{id, kind, title, state, version, created_at}`
 
 ## 질문 검색
 
-- `POST /search` `{q, drop?: [key], session_id?}` → (대화에 저장되고 아래 필드에 `session_id, message_id, question, effective_query, dropped, asked_at`이 더해진다)
+- `POST /search` `{q, drop?: [key], session_id?, exclude_types?: ["news", ...]}` → (대화에 저장되고 아래 필드에 `session_id, message_id, question, effective_query, dropped, asked_at`이 더해진다)
   `{query, understood: [{key, label}], relaxed, opinion, to_check: [str], sources: [evidence], related: [evidence], listings: [listing + {notes, matched: [{want, text}], unmet: [str], checks, trade_reference}], gate: {status, messages}, generator}`
   - `understood`: 질문에서 뽑은 조건. key는 `district`·`price`·`area`·`walk`·`station`·`complex`·`first_home`·`want:학교` 등. `drop`에 key를 넣으면 그 조건을 빼고 다시 찾는다.
   - `relaxed`: 조건을 모두 만족하는 매물이 없어 조건을 넓혀(가격 ±10%, 면적 ±10%, 역 +5분) 찾았는지. 이때 각 매물의 `unmet`에 차이가 적힌다.
@@ -95,6 +97,10 @@ report_summary: `{id, kind, title, state, version, created_at}`
   - `place`: 질문한 지역 `{name, region, lat, lng, radius_m}` (동·생활권·신도시는 반경 m, 구는 반경 없음). 지도가 이 지역으로 옮겨 반경을 그린다. `listing_intent`: 매물을 찾는 질문인지.
   - `session_id`가 있고 질문이 '그중·거기서·그럼…'으로 시작하면 앞 질문에 이어 붙여 찾는다(`effective_query`). 같은 질문에서 조건만 뺀 다시 찾기는 마지막 답을 바꾼다.
   - 사무소의 월 질문 한도를 넘으면 429.
+  - `routes`: 실행한 검색 경로 (`listing`, `trade`, `rent`, `complex`, `building`, `station`, `document`). 전월세·세대수·난방·사용승인·건축물대장·노선을 물을 때만 해당 공공 캐시를 읽는다.
+  - 구조화 근거 id: `r{매물}` 전월세, `k{매물}` 단지(K-apt), `b{매물}` 건축물대장, `s{매물}` 지하철 노선. `kind: "structured"`, `source_id`(데이터셋 번호), `value`, `collected_at`을 가진다. 수집 후 오래되면 `state: "stale"`, 표본이 3건 미만이면 `"warning"`. `stale_count`는 답변에 쓴 오래된 근거 수.
+  - 전세·월세 질문의 금액은 매매 매물 가격 조건으로 쓰지 않는다. 매물 `listings[].public`에 쓴 공공데이터 요약이 붙는다.
+  - 질문마다 `retrieval_traces`에 질문 해시·경로·근거 id·게이트·응답 시간이 남는다(원문 저장 안 함).
 - 고객 자료 `kind: "answer"`도 같은 엔진을 쓴다. 질문에 없는 예산·면적·지역은 고객 조건으로 채우고, 찾은 매물은 자료의 `listings`에 저장된다.
 
 ## Hood AI (대화·설정·사용량·보고서)
@@ -103,7 +109,7 @@ report_summary: `{id, kind, title, state, version, created_at}`
 - `GET /ai/sessions/{id}` → `{id, title, updated_at, messages: [POST /search 응답과 같은 모양]}` · `DELETE /ai/sessions/{id}`. 남의 대화는 404.
 - `GET /ai/settings` → `{source_types, detail_count, near_miss, monthly_limit, updated_by, updated_at, month_used, can_edit, llm: {enabled, model}}`
 - (관리자) `PUT /ai/settings` `{source_types: ["law"|"policy"|"office"|"news"], detail_count: 1~5, near_miss, monthly_limit|null}`: 답변에 쓸 자료, 자세히 설명할 매물 수, 조건을 넓혀 찾기, 월 질문 한도
-- `GET /ai/usage?days=14` → 이번 달·오늘·내 질문 수, 매물을 찾은 답변, 고객 자료로 만든 답변, 일별 질문, 사람별, 출처 종류별, 답변당 평균 출처 (한국 시간 기준, 모두 기록에서 센 값)
+- `GET /ai/usage?days=14` → 이번 달·오늘·내 질문 수, 매물을 찾은 답변, 고객 자료로 만든 답변, 일별 질문, 사람별, 출처 종류별, 답변당 평균 출처, 검색 추적(`traces`, `latency_avg_ms`, `latency_p95_ms`, `stale_answers`, `by_route`) (한국 시간 기준, 모두 기록에서 센 값)
 - `GET /reports?state=draft|review|done` → `{items: [{id, kind, title, question, state, version, customer_name, created_by, created_at, share_views}], counts: {all, draft, review, done}}`
 
 ## 자료실 (문서 근거 검색)
@@ -115,6 +121,21 @@ report_summary: `{id, kind, title, state, version, created_at}`
 - `GET /evidence/{id}` → evidence (`c12` 형식)
 - (관리자) `POST /admin/documents` multipart `file, title, source_type, publisher, published_at, effective_date?, region?, url?, scope` → `{job}`
 - (관리자) `DELETE /admin/documents/{id}`, `GET /admin/jobs`, `POST /admin/collect/trades`, `GET /audit`
+
+## 구조화 공공데이터
+
+- (관리자) `POST /admin/collect/rents` `{lawd_cd, deal_ymd}`: 아파트 전월세(`15126474`) 수집
+- (관리자) `POST /admin/collect/complexes` `{kapt_code}`: K-apt 기본정보(`15058453`) 수집
+- (관리자) `POST /admin/collect/buildings` `{sigungu_cd, bjdong_cd, plat_gb_cd?, bun?, ji?}`: 건축물대장 표제부(`15134735`) 수집
+- (관리자) `POST /admin/collect/subway-stations` `{station_name}`: TAGO 역 검색(`15098554`) 수집
+- 공통 수집 응답: `{dataset_id, received, valid, invalid, inserted, updated, unchanged, job}`
+- `GET /public-data/rents?lawd_cd=&complex_name=&area_m2=&months=&limit=`: 동일 단지·유사면적 전월세 캐시
+- `GET /public-data/complexes/{kapt_code}`: K-apt 단지 캐시
+- `GET /public-data/buildings?sigungu_cd=&bjdong_cd=&bun=&ji=&limit=`: 건축물대장 캐시
+- `GET /public-data/subway-stations?q=&limit=`: 지하철역·노선 캐시
+
+수집 API는 관리자만 사용할 수 있고 조회 API도 로그인이 필요하다. 원천 `raw_payload`와 내부 중복방지 키는 조회 응답에 포함하지 않는다. 사용자 질문 중에는 외부 API를 직접 호출하지 않고 이 캐시를 조회한다.
+관리자 화면 `#/public`은 위 수집 API 5종과 `GET /admin/jobs`를 사용한다. 서비스키는 서버 환경변수에만 있으며 화면에서는 입력하거나 조회하지 않는다.
 
 ## 운영
 
