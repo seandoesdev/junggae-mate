@@ -321,7 +321,7 @@ def render_html(report: dict, office: str, *, print_on_load: bool) -> str:
             if sid not in order:
                 order.append(sid)
             return f"<sup>{order.index(sid) + 1})</sup>"
-        return re.sub(r"\[([clt]\d+)\]", sub, e(text))
+        return re.sub(r"\[([cltrkbs]\d+)\]", sub, e(text))
 
     def cell_trade(l):
         t = l.get("trade_reference")

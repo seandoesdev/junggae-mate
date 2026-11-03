@@ -78,3 +78,20 @@ def test_fetch_trades_requires_configured_key(monkeypatch):
 
     with pytest.raises(public_data.ExternalUnavailable, match="설정되지 않았습니다"):
         public_data.fetch_trades("11440", "202609")
+
+
+def test_fetch_trades_sanitizes_http_error_url_and_service_key(monkeypatch):
+    secret = "FAKE_SECRET_SHOULD_NOT_LEAK"
+    request = httpx.Request("GET", f"{public_data.TRADE_URL}?serviceKey={secret}")
+    response = httpx.Response(503, request=request)
+
+    def fail(*_args, **_kwargs):
+        raise httpx.HTTPStatusError("upstream failed", request=request, response=response)
+
+    monkeypatch.setattr(public_data, "settings", SimpleNamespace(data_go_kr_key=secret, external_timeout=3))
+    monkeypatch.setattr(public_data.httpx, "get", fail)
+    public_data.trade_breaker.success()
+    with pytest.raises(public_data.ExternalUnavailable) as caught:
+        public_data.fetch_trades("11440", "202609")
+    assert str(caught.value) == public_data.TRADE_UNAVAILABLE_MESSAGE
+    assert secret not in str(caught.value) and "serviceKey" not in str(caught.value)

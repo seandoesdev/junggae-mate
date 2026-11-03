@@ -97,3 +97,35 @@ def test_kapt_uses_documented_service_key_casing():
     assert rows == [{"kaptCode": "A1001"}]
     assert seen["ServiceKey"] == ["key"]
     assert "serviceKey" not in seen
+
+
+def test_subway_parses_json_response():
+    def handler(_request: httpx.Request):
+        return httpx.Response(
+            200,
+            json={
+                "response": {
+                    "header": {"resultCode": "00", "resultMsg": "NORMAL SERVICE."},
+                    "body": {
+                        "items": {
+                            "item": [
+                                {
+                                    "subwayStationId": "MTR123",
+                                    "subwayStationName": "공덕",
+                                    "subwayRouteName": "5호선",
+                                }
+                            ]
+                        },
+                        "totalCount": 1,
+                    },
+                }
+            },
+        )
+
+    with client_for(handler) as client:
+        rows = public_catalog.fetch_dataset(
+            "15098554", {"subwayStationName": "공덕"}, service_key="key", client=client
+        )
+    assert rows == [
+        {"subwayStationId": "MTR123", "subwayStationName": "공덕", "subwayRouteName": "5호선"}
+    ]

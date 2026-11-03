@@ -2,7 +2,9 @@
 import json
 import logging
 import re
+from html import escape
 
+from . import rag
 from .config import settings
 
 log = logging.getLogger("mate.llm")
@@ -33,16 +35,31 @@ def _client():
     return anthropic.Anthropic(api_key=settings.anthropic_api_key, timeout=settings.llm_timeout, max_retries=1)
 
 
+def serialize_evidence(evidence: list[dict]) -> str:
+    """근거를 LLM 입력으로 직렬화한다. canonical/구형 필드를 모두 허용한다."""
+    items = []
+    for raw in evidence:
+        item = rag.canonical_evidence(raw)
+        attrs = {
+            "id": item["id"],
+            "source_type": item["type"],
+            "title": item.get("title", ""),
+            "date": item.get("date", ""),
+        }
+        attr_text = " ".join(f'{key}="{escape(str(value), quote=True)}"' for key, value in attrs.items())
+        items.append(f"<item {attr_text}>{escape(str(item.get('snippet', ''))[:1200])}</item>")
+    return "\n".join(items)
+
+
 def generate_claims(task: str, context: str, evidence: list[dict]) -> list[dict]:
     """근거 목록과 상담 문맥으로 claim 목록을 생성한다. 인용 검증은 호출자가 한다."""
     import anthropic
 
-    ev_text = "\n".join(
-        f'<item id="{e["chunk_id"]}" source_type="{e["source_type"]}" title="{e["title"]}" date="{e["date"]}">'
-        f'{e["snippet"][:1200]}</item>'
-        for e in evidence
+    ev_text = serialize_evidence(evidence)
+    user = (
+        f"<task>{escape(task)}</task>\n<context>{escape(context)}</context>"
+        f"\n<evidence>\n{ev_text}\n</evidence>"
     )
-    user = f"<task>{task}</task>\n<context>{context}</context>\n<evidence>\n{ev_text}\n</evidence>"
     try:
         resp = _client().beta.messages.create(
             model=settings.llm_model,

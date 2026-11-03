@@ -2,6 +2,7 @@
 import logging
 from datetime import date
 
+from . import public_sources as ps
 from . import rag
 from .db import tx
 from .security import hash_password
@@ -54,6 +55,30 @@ NOTES = [  # 매물, 담당 키, 현장 메모
     ("G", "kim", "단지 뒤 숲길 산책로 바로 연결. 밤에 조용함."),
     ("K", "park", "관리비 월 32만 원 수준(84㎡ 기준 아님, 74㎡). 하자 보수 1건 진행 중."),
 ]
+
+# 시연용 공공데이터: 실제 API 응답과 같은 필드명으로 만들어 public_sources의 정규화·저장 경로를 그대로 거친다
+PUBLIC_RENTS = [  # 단지, 면적, (계약일, 보증금 만원, 월세 만원)
+    ("마포한강뷰", 59.9, [("2026-06-12", 52000, 0), ("2026-08-03", 53500, 0), ("2026-09-21", 30000, 95), ("2026-10-08", 54000, 0)]),
+    ("마포공원앞", 62.3, [("2026-07-15", 49000, 0), ("2026-09-02", 25000, 110)]),
+    ("공덕역세권", 59.8, [("2026-05-30", 55000, 0), ("2026-08-19", 56000, 0), ("2026-10-11", 57000, 0)]),
+]
+PUBLIC_COMPLEXES = [  # 코드, 단지명, 주소, 난방, 사용승인, 동수, 세대수
+    ("A10027001", "마포한강뷰", "서울특별시 마포구 공덕동 (샘플)", "개별난방", "20140321", 6, 612),
+    ("A10027002", "마포공원앞", "서울특별시 마포구 공덕동 (샘플)", "지역난방", "20090815", 4, 388),
+    ("A10027003", "공덕역세권", "서울특별시 마포구 공덕동 (샘플)", "지역난방", "20190228", 3, 254),
+    ("A10027004", "마포한강뷰2차", "서울특별시 마포구 도화동 (샘플)", "개별난방", "20160910", 2, 140),
+]
+PUBLIC_BUILDINGS = [  # 건물명, 지번, 주용도, 구조, 연면적, 세대수, 사용승인
+    ("마포한강뷰", "서울특별시 마포구 공덕동 100 (샘플)", "공동주택", "철근콘크리트구조", "68420.5", 612, "20140321"),
+    ("공덕역세권", "서울특별시 마포구 공덕동 220 (샘플)", "공동주택", "철근콘크리트구조", "30410.0", 254, "20190228"),
+]
+PUBLIC_STATIONS = [  # 역 ID, 역명, 노선 ID, 노선명
+    ("MTRS15529", "공덕", "S1105", "5호선"), ("MTRS16626", "공덕", "S1106", "6호선"),
+    ("MTRKRK312", "공덕", "S110K", "경의중앙선"), ("MTRAR0A06", "공덕", "S110A", "공항철도"),
+    ("MTRS15530", "애오개", "S1105", "5호선"), ("MTRS15528", "마포", "S1105", "5호선"),
+    ("MTRS16625", "대흥", "S1106", "6호선"), ("MTRS12241", "아현", "S1102", "2호선"),
+]
+SAMPLE = " (시연용 샘플)"
 
 LISTINGS_T2 = [("A", "연희언덕집 59", "연희언덕", 69000, 59.0, "2/5층", "신촌역", 12, 5, 37.5660, 126.9300, "other", [])]
 
@@ -143,6 +168,39 @@ DOCS = [
 ]
 
 
+def seed_public(conn) -> None:
+    """시연용 공공 원천 캐시. 실제 수집(/api/admin/collect/*)과 같은 정규화·저장 함수를 쓴다."""
+    rents = []
+    for cx, area, deals in PUBLIC_RENTS:
+        for i, (d, deposit, monthly) in enumerate(deals):
+            y, m, dd = d.split("-")
+            rents.append(ps.normalize_rent({"sggCd": "11440", "sggNm": "마포구", "umdNm": "공덕동", "aptNm": cx,
+                                            "excluUseAr": str(area), "floor": str(4 + i), "dealYear": y, "dealMonth": m,
+                                            "dealDay": dd, "deposit": f"{deposit:,}", "monthlyRent": str(monthly)},
+                                           {"LAWD_CD": "11440"}))
+    for r in rents:
+        r["source"] += SAMPLE
+    ps.store_rents(conn, rents)
+    cxs = [ps.normalize_complex({"kaptCode": c, "kaptName": n, "kaptAddr": a, "codeHeatNm": h, "kaptUsedate": u,
+                                 "kaptDongCnt": str(dong), "kaptdaCnt": str(hh), "codeSaleNm": "분양"}, {})
+           for c, n, a, h, u, dong, hh in PUBLIC_COMPLEXES]
+    for c in cxs:
+        c["source"] += SAMPLE
+    ps.store_complexes(conn, cxs)
+    bld = [ps.normalize_building({"mgmBldrgstPk": f"11440-SAMPLE-{i}", "bldNm": n, "platPlc": addr, "mainPurpsCdNm": mp,
+                                  "strctCdNm": st, "totArea": area, "hhldCnt": str(hh), "useAprDay": u, "regstrKindCdNm": "총괄표제부"},
+                                 {"sigunguCd": "11440", "bjdongCd": "10200", "bun": str(100 + i), "ji": "0"})
+           for i, (n, addr, mp, st, area, hh, u) in enumerate(PUBLIC_BUILDINGS)]
+    for b in bld:
+        b["source"] += SAMPLE
+    ps.store_buildings(conn, bld)
+    sts = [ps.normalize_subway({"subwayStationId": sid, "subwayStationName": name, "subwayRouteId": rid, "subwayRouteName": rn}, {})
+           for sid, name, rid, rn in PUBLIC_STATIONS]
+    for st in sts:
+        st["source"] += SAMPLE
+    ps.store_subway_stations(conn, sts)
+
+
 def seed() -> None:
     with tx() as conn:
         conn.execute("SELECT pg_advisory_xact_lock(4243)")
@@ -219,6 +277,12 @@ def seed() -> None:
                        VALUES ('11440','마포구','공덕동',%s,%s,%s,%s,%s,%s)""",
                     (cx, area, price, d, 5 + i, "국토교통부 아파트 매매 실거래가 (시연용 샘플)"),
                 )
+
+        seed_public(conn)
+        # 연결 샘플: A는 단지·역을 확정해 둔다. 나머지 매물은 상세 화면에서 후보를 골라 확정해 보도록 둔다
+        for kind, key, label in [("complex", "A10027001", "마포한강뷰"), ("station", "공덕", "공덕 (5호선·6호선·경의중앙선·공항철도)")]:
+            conn.execute("""INSERT INTO entity_links (tenant_id, listing_id, kind, entity_key, label, match_method, confidence, confirmed_by)
+                            VALUES (%s,%s,%s,%s,%s,'suggested',1.0,%s)""", (t1, ids[(t1, "A")], kind, key, label, users["kim"]))
 
         tenants = {None: None, 1: t1, 2: t2}
         for d in DOCS:

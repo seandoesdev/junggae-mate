@@ -223,6 +223,7 @@ class Body:
         self.evidence: dict[str, dict] = {}
 
     def add(self, ev: dict) -> str:
+        ev = rag.canonical_evidence(ev)
         self.evidence.setdefault(ev["id"], ev)
         return ev["id"]
 
@@ -233,7 +234,7 @@ class Body:
         self.to_check.append(with_refs(text, cites or []))
 
     def result(self) -> dict:
-        used = list(dict.fromkeys(re.findall(r"\[([clt]\d+)\]", " ".join(self.opinion + self.to_check))))
+        used = list(dict.fromkeys(re.findall(r"\[([cltrkbs]\d+)\]", " ".join(self.opinion + self.to_check))))
         return {"opinion": " ".join(self.opinion), "to_check": self.to_check,
                 "sources": [self.evidence[i] for i in used if i in self.evidence]}
 
@@ -276,7 +277,9 @@ def verify_citations(claims: list[dict], evidence: dict[str, dict]) -> list[dict
     for c in claims:
         cites = [x for x in c.get("citations", []) if x in evidence]
         status = c.get("status", "verified")
-        if status == "verified" and (not cites or all(evidence[x]["type"] == "news" for x in cites)):
+        if status == "verified" and (
+            not cites or all(rag.canonical_evidence(evidence[x])["type"] == "news" for x in cites)
+        ):
             status = "unverifiable"
         out.append({"text": str(c["text"]).strip(), "status": status, "citations": cites})
     return out
@@ -340,7 +343,9 @@ def draft_compare(conn, user, customer: dict, listing_ids: list[int] | None) -> 
         lid = body.add(listing_evidence(l))
         checks = condition_checks(l, customer)
         ref = trade_reference(conn, l)
-        snapshot.append({**l, "checks": checks, "trade_reference": ref})
+        from . import structured  # 지연 import: structured가 drafting을 쓰므로 순환을 피한다
+        fx = structured.facts(conn, user.tenant_id, l)
+        snapshot.append({**l, "checks": checks, "trade_reference": ref, "public": structured.public_summary(fx)})
         unmet = [c["condition"] for c in checks if not c["ok"]]
         fit = "찾으시는 조건에 맞습니다." if not unmet else f"{'·'.join(unmet)} 조건과는 차이가 있습니다."
         body.say(f"{l['label']} {l['title']}는 {eok(l['price'])}, 전용 {l['area_m2']:g}㎡로 {fit}", [lid])
@@ -351,6 +356,12 @@ def draft_compare(conn, user, customer: dict, listing_ids: list[int] | None) -> 
             first, last = l["price_history"][0], l["price_history"][-1]
             body.say(f"가격이 {eok(first['price'])}에서 {josa(eok(last['price']), '으로')} 조정되었습니다"
                      f"({last['changed_at'][5:].replace('-', '/')}).", [lid])
+        if fx["complex"]:
+            v = fx["complex"]["value"]
+            bits = [f"{v['household_count']}세대" if v.get("household_count") else None,
+                    f"사용승인 {v['approval_date']}" if v.get("approval_date") else None]
+            if any(bits):
+                body.say(f"단지는 {', '.join(b for b in bits if b)}입니다.", [body.add(fx["complex"]["evidence"])])
         if ref:
             tid = body.add(trade_evidence(l, ref))
             body.say(f"같은 단지 비슷한 면적의 최근 실거래 중위가는 {eok(ref['median_price'])}({ref['count']}건)입니다.", [tid])
@@ -407,5 +418,7 @@ def get_chunk(conn, tenant_id: int, chunk_id: str) -> dict | None:
         """SELECT c.id, c.document_id, c.location, c.text, d.title, d.publisher, d.source_type, d.published_at,
                   d.effective_date, d.region, d.url, d.facts, 1.0::float AS score
            FROM chunks c JOIN documents d ON d.id = c.document_id
-           WHERE c.id = %s AND (c.tenant_id IS NULL OR c.tenant_id = %s)""",
-        (int(raw), tenant_id)).fetchone()
+           WHERE c.id = %s
+             AND (c.tenant_id IS NULL OR c.tenant_id = %s)
+             AND (d.tenant_id IS NULL OR d.tenant_id = %s)""",
+        (int(raw), tenant_id, tenant_id)).fetchone()

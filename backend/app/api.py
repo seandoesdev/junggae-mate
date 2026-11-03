@@ -3,11 +3,11 @@ from datetime import date
 from pathlib import Path
 from typing import Literal
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.responses import HTMLResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
-from . import assistant, drafting, hood, llm, public_data, rag, workflow
+from . import assistant, drafting, hood, llm, structured, public_catalog, public_data, public_sources, rag, workflow
 from .audit import record
 from .db import fetch_one, pool, tx
 from .security import CurrentUser, create_token, current_user, require_admin, verify_password
@@ -110,6 +110,15 @@ class SearchIn(BaseModel):
     q: str = Field(..., min_length=1, max_length=500)
     drop: list[str] = Field(default_factory=list, max_length=20, description="지울 조건 key (예: price, want:학교)")
     session_id: int | None = Field(None, description="이어서 물을 대화. 없으면 새 대화를 만든다")
+    exclude_types: list[Literal["law", "policy", "office", "news"]] = Field(
+        default_factory=list, description="이번 질문에서만 뺄 문서 유형 (예: 기사 빼고)")
+
+
+class LinkIn(BaseModel):
+    entity_key: str = Field(
+        ..., min_length=1, max_length=1000,
+        description="complex: kapt_code, building: source_key, station: station_id 또는 station_ids:id1,id2",
+    )
 
 
 class AISettingsIn(BaseModel):
@@ -133,6 +142,37 @@ class TradeCollectIn(BaseModel):
     lawd_cd: str = Field(..., pattern=r"^\d{5}$")
     deal_ymd: str = Field(..., pattern=r"^\d{6}$")
 
+    @field_validator("deal_ymd")
+    @classmethod
+    def valid_deal_month(cls, value: str) -> str:
+        if not 1 <= int(value[4:]) <= 12:
+            raise ValueError("계약월은 YYYYMM 형식이어야 합니다.")
+        return value
+
+
+class KaptCollectIn(BaseModel):
+    kapt_code: str = Field(..., min_length=1, max_length=30, pattern=r"^[A-Za-z0-9]+$")
+
+
+class BuildingCollectIn(BaseModel):
+    sigungu_cd: str = Field(..., pattern=r"^\d{5}$")
+    bjdong_cd: str = Field(..., pattern=r"^\d{5}$")
+    plat_gb_cd: str | None = Field(None, pattern=r"^[0-3]$")
+    bun: str | None = Field(None, pattern=r"^\d{1,4}$")
+    ji: str | None = Field(None, pattern=r"^\d{1,4}$")
+
+
+class SubwayCollectIn(BaseModel):
+    station_name: str = Field(..., min_length=1, max_length=50)
+
+    @field_validator("station_name")
+    @classmethod
+    def non_blank_station_name(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("역명을 입력해 주세요.")
+        return value
+
 
 # ---------- 공통 ----------
 
@@ -148,6 +188,8 @@ def _guard(fn, *args, **kwargs):
         raise HTTPException(503, f"문서 초안을 만들지 못했습니다({e}). 매물·고객·거래 기능은 계속 쓸 수 있습니다.")
     except hood.LimitReached as e:
         raise HTTPException(429, str(e))
+    except structured.LinkError as e:
+        raise HTTPException(422, str(e))
 
 
 def _listing(conn, user: CurrentUser, listing_id: int, include_closed: bool = False) -> dict:
@@ -251,6 +293,44 @@ def get_listing(listing_id: int, user: CurrentUser = Depends(current_user)):
                 "deals": workflow.list_deals(conn, user.tenant_id, listing_id=listing_id),
                 "checks": workflow.listing_checks(conn, user, listing),
                 "notes": assistant.listing_notes(conn, [listing_id]).get(listing_id, [])}
+
+
+# ---------- 매물 ↔ 공공데이터 (단지·건축물대장·지하철역) ----------
+
+@router.get("/listings/{listing_id}/public")
+def listing_public(listing_id: int, user: CurrentUser = Depends(current_user)):
+    """연결된 공공데이터와 근거, 아직 연결하지 않은 종류의 후보. 질문 중 외부 API는 부르지 않는다."""
+    with pool.connection() as conn:
+        listing = _listing(conn, user, listing_id)
+        fx = structured.facts(conn, user.tenant_id, listing)
+        return {"links": fx["links"], "candidates": structured.candidates(conn, listing),
+                "facts": {k: ({"value": fx[k]["value"], "evidence": fx[k]["evidence"]} if fx[k] else None)
+                          for k in ("rent", "complex", "building", "station")},
+                "can_edit": listing["mine"] or user.role == "admin"}
+
+
+@router.put("/listings/{listing_id}/links/{kind}")
+def link_listing(listing_id: int, kind: Literal["complex", "building", "station"], body: LinkIn,
+                 user: CurrentUser = Depends(current_user)):
+    """후보 중 하나를 사람이 확정한다. 매물 담당·관리자만."""
+    with tx() as conn:
+        listing = _listing(conn, user, listing_id)
+        _own_listing(user, listing)
+        link = _guard(structured.confirm, conn, user, listing, kind, body.entity_key.strip())
+        record(conn, tenant_id=user.tenant_id, user_id=user.id, event="listing.linked", entity="listing",
+               entity_id=listing_id, payload={"kind": kind, "entity_key": link["entity_key"], "method": link["match_method"]})
+        return link
+
+
+@router.delete("/listings/{listing_id}/links/{kind}")
+def unlink_listing(listing_id: int, kind: Literal["complex", "building", "station"], user: CurrentUser = Depends(current_user)):
+    with tx() as conn:
+        listing = _listing(conn, user, listing_id)
+        _own_listing(user, listing)
+        structured.unlink(conn, user.tenant_id, listing_id, kind)
+        record(conn, tenant_id=user.tenant_id, user_id=user.id, event="listing.unlinked", entity="listing",
+               entity_id=listing_id, payload={"kind": kind})
+    return {"deleted": kind}
 
 
 @router.post("/listings/{listing_id}/notes", status_code=201)
@@ -508,7 +588,8 @@ def shared_report(token: str):
 def search(body: SearchIn, user: CurrentUser = Depends(current_user)):
     """질문 하나로 매물·실거래가·법령·정책·사무소 자료·기사를 함께 찾아 답변 초안과 맞는 매물을 돌려준다."""
     with tx() as conn:
-        result = _guard(hood.ask, conn, user, body.q, drop=body.drop, session_id=body.session_id)
+        result = _guard(hood.ask, conn, user, body.q, drop=body.drop, session_id=body.session_id,
+                        exclude_types=body.exclude_types)
         record(conn, tenant_id=user.tenant_id, user_id=user.id, event="search.asked", entity="ai_session",
                entity_id=result["session_id"],
                payload={"generator": result["generator"], "listings": [l["id"] for l in result["listings"]],
@@ -629,9 +710,7 @@ def evidence_search(q: str, type: Literal["law", "policy", "office", "news"] | N
     if not q.strip():
         return {"items": [], "gate": {"status": "insufficient", "messages": []}}
     with pool.connection() as conn:
-        hits = rag.search(conn, user.tenant_id, q.strip(), k=12)
-    if type:
-        hits = [h for h in hits if h["source_type"] == type]
+        hits = rag.search(conn, user.tenant_id, q.strip(), k=12, source_types=[type] if type else None)
     gate = rag.evidence_gate(hits, as_of=date.today(), policy_question=rag.is_policy_question(q))
     return {"items": list(gate["evidence"].values()), "gate": {"status": gate["status"], "messages": gate["messages"]}}
 
@@ -727,15 +806,181 @@ def collect_trades(body: TradeCollectIn, user: CurrentUser = Depends(require_adm
                            (user.tenant_id, f"{body.lawd_cd}/{body.deal_ymd}")).fetchone()
     try:
         rows = public_data.fetch_trades(body.lawd_cd, body.deal_ymd)
-    except public_data.ExternalUnavailable as e:
+    except public_data.ExternalUnavailable:
+        message = public_data.TRADE_UNAVAILABLE_MESSAGE
         with tx() as conn:
-            conn.execute("UPDATE ingest_jobs SET status='failed', detail=%s, finished_at=now() WHERE id=%s", (str(e), job["id"]))
-        raise HTTPException(503, str(e))
+            conn.execute("UPDATE ingest_jobs SET status='failed', detail=%s, finished_at=now() WHERE id=%s", (message, job["id"]))
+        raise HTTPException(503, message)
     with tx() as conn:
         n = public_data.store_trades(conn, rows)
         conn.execute("UPDATE ingest_jobs SET status='done', detail=%s, finished_at=now() WHERE id=%s",
                      (f"{len(rows)}건 수신, {n}건 신규 저장", job["id"]))
     return {"received": len(rows), "inserted": n}
+
+
+def _safe_public_rows(rows):
+    """원천 응답과 내부 키가 캐시 조회 API로 새지 않게 한다."""
+    if rows is None:
+        return None
+    if isinstance(rows, dict):
+        return {key: value for key, value in rows.items() if key not in {"raw_payload", "source_key"}}
+    return [_safe_public_rows(row) for row in rows]
+
+
+def _collect_public_dataset(dataset_id: str, params: dict[str, str], label: str, user: CurrentUser):
+    with tx() as conn:
+        job = conn.execute(
+            """INSERT INTO ingest_jobs (tenant_id, kind, status, detail)
+               VALUES (%s,%s,'running',%s) RETURNING id""",
+            (user.tenant_id, f"public_data:{dataset_id}", f"{dataset_id} {label}"),
+        ).fetchone()
+    try:
+        raw_rows = public_catalog.fetch_dataset(dataset_id, params)
+        with tx() as conn:
+            result = public_sources.collect_and_store(
+                conn, dataset_id, params, fetcher=lambda _dataset_id, _params: raw_rows
+            )
+    except (public_sources.PublicSourceError, public_catalog.PublicDataError):
+        message = "공공데이터 수집에 실패했습니다. 승인 상태와 요청 조건을 확인해 주세요."
+        with tx() as conn:
+            conn.execute(
+                "UPDATE ingest_jobs SET status='failed', detail=%s, finished_at=now() WHERE id=%s",
+                (message, job["id"]),
+            )
+        raise HTTPException(503, message)
+    except Exception:
+        with tx() as conn:
+            conn.execute(
+                "UPDATE ingest_jobs SET status='failed', detail=%s, finished_at=now() WHERE id=%s",
+                ("공공데이터 저장 중 오류가 발생했습니다.", job["id"]),
+            )
+        raise
+
+    summary = (
+        f"{result['received']}건 수신, {result['inserted']}건 신규, "
+        f"{result['updated']}건 갱신, {result['invalid']}건 제외"
+    )
+    with tx() as conn:
+        conn.execute(
+            "UPDATE ingest_jobs SET status='done', detail=%s, finished_at=now() WHERE id=%s",
+            (summary, job["id"]),
+        )
+        record(
+            conn,
+            tenant_id=user.tenant_id,
+            user_id=user.id,
+            event="public_data.collected",
+            entity="ingest_job",
+            entity_id=job["id"],
+            payload={**result},
+        )
+    return {**result, "job": fetch_one("SELECT * FROM ingest_jobs WHERE id = %s", (job["id"],))}
+
+
+@router.post("/admin/collect/rents")
+def collect_rents(body: TradeCollectIn, user: CurrentUser = Depends(require_admin)):
+    return _collect_public_dataset(
+        public_sources.RENT_DATASET,
+        {"LAWD_CD": body.lawd_cd, "DEAL_YMD": body.deal_ymd},
+        f"{body.lawd_cd}/{body.deal_ymd}",
+        user,
+    )
+
+
+@router.post("/admin/collect/complexes")
+def collect_complexes(body: KaptCollectIn, user: CurrentUser = Depends(require_admin)):
+    return _collect_public_dataset(
+        public_sources.KAPT_DATASET, {"kaptCode": body.kapt_code}, body.kapt_code, user
+    )
+
+
+@router.post("/admin/collect/buildings")
+def collect_buildings(body: BuildingCollectIn, user: CurrentUser = Depends(require_admin)):
+    params = {"sigunguCd": body.sigungu_cd, "bjdongCd": body.bjdong_cd}
+    if body.plat_gb_cd is not None:
+        params["platGbCd"] = body.plat_gb_cd
+    if body.bun is not None:
+        params["bun"] = body.bun.zfill(4)
+    if body.ji is not None:
+        params["ji"] = body.ji.zfill(4)
+    return _collect_public_dataset(
+        public_sources.BUILDING_DATASET,
+        params,
+        f"{body.sigungu_cd}/{body.bjdong_cd}",
+        user,
+    )
+
+
+@router.post("/admin/collect/subway-stations")
+def collect_subway_stations(body: SubwayCollectIn, user: CurrentUser = Depends(require_admin)):
+    return _collect_public_dataset(
+        public_sources.SUBWAY_DATASET,
+        {"subwayStationName": body.station_name},
+        body.station_name,
+        user,
+    )
+
+
+@router.get("/public-data/rents")
+def public_rents(
+    lawd_cd: str = Query(..., pattern=r"^\d{5}$"),
+    complex_name: str = Query(..., min_length=1, max_length=100),
+    area_m2: float = Query(..., gt=0, lt=1000),
+    months: int = Query(12, ge=1, le=60),
+    limit: int = Query(30, ge=1, le=200),
+    user: CurrentUser = Depends(current_user),
+):
+    with pool.connection() as conn:
+        rows = public_sources.rent_references(
+            conn, lawd_cd=lawd_cd, complex_name=complex_name, area_m2=area_m2, months=months, limit=limit
+        )
+    return {"items": _safe_public_rows(rows), "total": len(rows)}
+
+
+@router.get("/public-data/complexes/{kapt_code}")
+def public_complex(kapt_code: str, user: CurrentUser = Depends(current_user)):
+    if not kapt_code.isascii() or not kapt_code.isalnum() or not 1 <= len(kapt_code) <= 30:
+        raise HTTPException(422, "유효한 K-apt 단지코드가 아닙니다.")
+    with pool.connection() as conn:
+        row = public_sources.get_complex(conn, kapt_code)
+    if not row:
+        raise HTTPException(404, "공동주택 정보를 찾을 수 없습니다.")
+    return _safe_public_rows(row)
+
+
+@router.get("/public-data/buildings")
+def public_buildings(
+    sigungu_cd: str = Query(..., pattern=r"^\d{5}$"),
+    bjdong_cd: str = Query(..., pattern=r"^\d{5}$"),
+    bun: str | None = Query(None, pattern=r"^\d{1,4}$"),
+    ji: str | None = Query(None, pattern=r"^\d{1,4}$"),
+    limit: int = Query(50, ge=1, le=200),
+    user: CurrentUser = Depends(current_user),
+):
+    with pool.connection() as conn:
+        rows = public_sources.find_buildings(
+            conn,
+            sigungu_cd=sigungu_cd,
+            bjdong_cd=bjdong_cd,
+            bun=bun.zfill(4) if bun else None,
+            ji=ji.zfill(4) if ji else None,
+            limit=limit,
+        )
+    return {"items": _safe_public_rows(rows), "total": len(rows)}
+
+
+@router.get("/public-data/subway-stations")
+def public_subway_stations(
+    q: str = Query(..., min_length=1, max_length=50),
+    limit: int = Query(20, ge=1, le=200),
+    user: CurrentUser = Depends(current_user),
+):
+    name = q.strip()
+    if not name:
+        raise HTTPException(422, "역명을 입력해 주세요.")
+    with pool.connection() as conn:
+        rows = public_sources.find_subway_stations(conn, name, limit=limit)
+    return {"items": _safe_public_rows(rows), "total": len(rows)}
 
 
 @router.get("/audit")
