@@ -109,6 +109,7 @@ function showApp() {
   $("#app").hidden = false;
   $("#me-name").textContent = `${S.user.name}${S.user.role === "admin" ? " (관리자)" : ""}`;
   $("#office-name").textContent = S.user.tenant_name;
+  document.querySelectorAll("[data-admin]").forEach((el) => { el.hidden = S.user.role !== "admin"; });
   route();
 }
 
@@ -163,18 +164,53 @@ async function openDrawer(id) {
   if (!ev && /^c\d+$/.test(id)) ev = remember(await api("GET", `/evidence/${id}`).catch(() => null));
   if (!ev) { toast("출처를 찾을 수 없습니다."); return; }
   const d = $("#drawer");
+  if (d.hidden) drawerOpener = document.activeElement;   // 닫을 때 포커스를 돌려줄 곳
   d.innerHTML = sourceBody(ev);
   d.hidden = false;
+  // 휴대폰 폭에서는 화면 대부분을 덮는 시트라 대화상자처럼 다룬다: 뒤 화면 스크롤 막기 + 포커스 가두기
+  const sheet = SHEET_MEDIA.matches;
+  d.setAttribute("role", sheet ? "dialog" : "complementary");
+  d.toggleAttribute("aria-modal", sheet);
+  document.body.classList.toggle("sheet-open", sheet);
   d.querySelector("button")?.focus();
 }
-function closeDrawer() { $("#drawer").hidden = true; }
+const SHEET_MEDIA = matchMedia("(max-width: 900px)");
+let drawerOpener = null;
+function closeDrawer() {
+  const d = $("#drawer");
+  if (d.hidden) return;
+  d.hidden = true;
+  document.body.classList.remove("sheet-open");
+  if (drawerOpener && drawerOpener.isConnected) drawerOpener.focus({ preventScroll: true });
+  drawerOpener = null;
+}
+// 휴대폰 시트일 때 어둡게 덮인 바깥을 누르면 닫는다 (여는 클릭과 겹치지 않게 pointerdown에서 판단)
+let swallowClick = 0;
+document.addEventListener("pointerdown", (e) => {
+  if (!document.body.classList.contains("sheet-open") || e.target.closest("#drawer")) return;
+  closeDrawer();
+  swallowClick = Date.now();   // 닫으려고 누른 것이 아래 화면의 버튼·링크까지 누르지 않게
+});
+document.addEventListener("click", (e) => {
+  if (swallowClick && Date.now() - swallowClick < 600) { e.preventDefault(); e.stopPropagation(); }
+  swallowClick = 0;
+}, true);
+// 휴대폰 시트일 때 Tab이 뒤 화면으로 빠져나가지 않게
+$("#drawer").addEventListener("keydown", (e) => {
+  if (e.key !== "Tab" || !SHEET_MEDIA.matches) return;
+  const f = [...$("#drawer").querySelectorAll("a[href], button:not([disabled]), input, select, textarea, [tabindex]:not([tabindex='-1'])")]
+    .filter((x) => x.offsetParent !== null);
+  if (!f.length) return;
+  if (e.shiftKey && document.activeElement === f[0]) { e.preventDefault(); f.at(-1).focus(); }
+  else if (!e.shiftKey && document.activeElement === f.at(-1)) { e.preventDefault(); f[0].focus(); }
+});
 ACTIONS.source = (el) => openDrawer(el.dataset.src);
 ACTIONS["close-drawer"] = closeDrawer;
 
 /* "…입니다[t3]." 의 출처 표시를 각주 번호로 바꾼다. order는 문서 전체에서 공유해 처음 나온 순서로 번호를 매긴다. */
 function withNotes(text, sources, order) {
   const byId = Object.fromEntries((sources || []).map((s) => [s.id, s]));
-  return esc(text).replace(/\[([clt]\d+)\]/g, (_, id) => {
+  return esc(text).replace(/\[([cltrkbs]\d+)\]/g, (_, id) => {
     const ev = byId[id];
     if (!ev) return "";
     if (!order.includes(id)) order.push(id);

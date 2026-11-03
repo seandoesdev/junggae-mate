@@ -17,24 +17,21 @@
       <header class="topbar">
         <a class="brand" href="#/map"><svg class="brand-mark" viewBox="0 0 24 24" aria-hidden="true"><rect width="24" height="24" rx="6" fill="#1b6c80"/><path d="M5 8.5 11 5l8 3.2-1.6 8.8L9 19l-4-3.4z" fill="none" stroke="#fff" stroke-width="1.6" stroke-linejoin="round"/><path d="M11 5l-1 7.2 7.4 4.8M10 12.2 5 16.6" fill="none" stroke="#fff" stroke-width="1.2" stroke-opacity=".55"/><circle cx="10" cy="12.2" r="1.8" fill="#fff"/></svg><span>중개메이트</span><span class="office" id="office-name"></span></a>
         <nav class="nav" aria-label="주요 메뉴">
-          <a href="#/map" data-nav="map">지도</a>
           <div class="nav-host">
-            <a href="#/ai" data-nav="ai" aria-haspopup="true">Hood AI<svg class="chev" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="m7 10 5 5 5-5"/></svg></a>
+            <a href="#/ai" data-nav="ai" aria-haspopup="true"><svg class="nav-spark" viewBox="0 0 24 24" fill="none" stroke-width="1.8" stroke-linejoin="round" aria-hidden="true"><path d="M12 3.5l1.9 5.2 5.1 1.9-5.1 1.9L12 17.7l-1.9-5.2L5 10.6l5.1-1.9z"/></svg>Hood AI<svg class="chev" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="m7 10 5 5 5-5"/></svg></a>
             <div class="nav-menu" role="menu" aria-label="Hood AI">
               <a role="menuitem" href="#/ai/reports"><b>보고서</b><span>Hood AI 답변으로 만든 고객 자료</span></a>
               <a role="menuitem" href="#/ai/usage"><b>사용량</b><span>질문 수, 사람별, 쓴 자료</span></a>
               <a role="menuitem" href="#/ai/settings"><b>설정</b><span>답변에 쓸 자료와 방식</span></a>
             </div>
           </div>
+          <a href="#/map" data-nav="map">지도</a>
           <a href="#/deals" data-nav="deals">거래</a>
           <a href="#/customers" data-nav="customers">고객</a>
           <a href="#/library" data-nav="library">자료실</a>
+          <a href="#/public" data-nav="public" data-admin hidden>공공데이터</a>
         </nav>
-        <button type="button" class="ask-trigger" id="ask-trigger" data-act="ask-open" aria-haspopup="dialog" aria-controls="ask-layer">
-          <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg><span class="lbl" id="ask-trigger-label">매물·법령·정책을 물어보세요</span><kbd>/</kbd>
-        </button>
         <span class="me">
-          <button type="button" class="icon-btn" id="hood-history-btn" data-act="hood-history" aria-label="이전 대화 불러오기" title="이전 대화"><svg viewBox="0 0 24 24" fill="none" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/></svg></button>
           <button type="button" class="ask-hood" id="ask-hood-btn" data-act="hood-toggle" aria-controls="hood-panel" aria-expanded="false"><svg viewBox="0 0 24 24" fill="none" stroke-width="1.8" stroke-linejoin="round" aria-hidden="true"><path d="M12 3.5l1.9 5.2 5.1 1.9-5.1 1.9L12 17.7l-1.9-5.2L5 10.6l5.1-1.9z"/></svg><span>Ask Hood</span></button>
           <span class="who-name" id="me-name"></span><button type="button" class="logout" data-act="logout">로그아웃</button></span>
       </header>
@@ -81,7 +78,7 @@
       <main id="view-ai" class="view view-ai" hidden>
         <aside class="ai-rail" aria-label="Hood AI 메뉴와 이전 대화">
           <nav class="ai-nav" aria-label="Hood AI">
-            <a href="#/ai" data-ai="search">검색</a>
+            <a href="#/ai" data-ai="search">채팅</a>
             <a href="#/ai/reports" data-ai="reports">보고서</a>
             <a href="#/ai/usage" data-ai="usage">사용량</a>
             <a href="#/ai/settings" data-ai="settings">설정</a>
@@ -91,6 +88,8 @@
         </aside>
         <section class="ai-main" id="ai-main"></section>
       </main>
+
+      <main id="view-public" class="view view-page public-admin" hidden></main>
 
       <main id="view-report" class="view view-report" hidden></main>
     </div>
@@ -107,29 +106,10 @@
       </form>
     </main>
 
-    <!-- 질문 창: 뒤가 흐려지고 위에서 내려온다. 시트 밖을 누르거나 Esc로 닫힌다 -->
-    <div class="ask-layer" id="ask-layer" role="dialog" aria-modal="true" aria-label="질문하기" aria-hidden="true">
-      <div class="ask-backdrop" data-act="ask-close"></div>
-      <form class="ask-sheet" id="ask-form" role="search" autocomplete="off">
-        <div class="ask-field">
-          <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
-          <input id="ask-q" type="search" maxlength="500" aria-label="질문 또는 찾는 조건"
-            placeholder="예: 마포구 8억 이하 59㎡ 학교 가까운 집" />
-          <button type="submit" class="ask-go">찾기</button>
-        </div>
-        <div class="ask-body">
-          <section><h2>이렇게 물어볼 수 있습니다</h2><ul id="ask-examples"></ul></section>
-          <section><h2 id="ask-recent-h">최근 질문</h2><ul id="ask-recent"></ul>
-            <p class="ask-uses" id="ask-uses">답변은 <b>매물 정보·현장 메모</b>, <b>실거래가</b>, <b>법령·정책</b>, <b>사무소 자료</b>, <b>기사</b>에서 찾아 문장마다 출처를 붙입니다.</p></section>
-        </div>
-        <div class="ask-foot"><span><kbd>Enter</kbd> 찾기</span><span><kbd>Esc</kbd> 또는 바깥을 눌러 닫기</span></div>
-      </form>
-    </div>
-
     <!-- Ask Hood: 어느 화면에서든 오른쪽에서 바로 묻는 패널. 시계로 이전 대화를 불러온다 -->
     <aside class="hood-panel" id="hood-panel" aria-label="Ask Hood" aria-hidden="true">
       <header class="hood-h">
-        <h2>Ask Hood</h2>
+        <h2 class="hood-title"><svg viewBox="0 0 24 24" fill="none" stroke-width="1.8" stroke-linejoin="round" aria-hidden="true"><path d="M12 3.5l1.9 5.2 5.1 1.9-5.1 1.9L12 17.7l-1.9-5.2L5 10.6l5.1-1.9z"/></svg><span>Ask Hood</span></h2>
         <span class="hood-tools">
           <button type="button" class="icon-btn" data-act="hood-history" aria-label="이전 대화" title="이전 대화"><svg viewBox="0 0 24 24" fill="none" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/></svg></button>
           <button type="button" class="icon-btn" data-act="hood-new" aria-label="새 대화" title="새 대화"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg></button>
@@ -139,8 +119,12 @@
       </header>
       <div class="hood-body" id="hood-body"></div>
       <form class="composer composer--panel" id="hood-form" autocomplete="off">
-        <textarea id="hood-q" rows="1" maxlength="500" aria-label="Hood에게 질문" placeholder="질문하거나 이어서 물어보세요"></textarea>
-        <button type="submit" class="composer-go">찾기</button>
+        <textarea id="hood-q" rows="2" maxlength="500" aria-label="Hood에게 질문" placeholder="질문하거나 이어서 물어보세요"></textarea>
+        <div class="composer-bar">
+          <button type="button" class="icon-btn" data-act="add-doc" aria-label="자료 추가 (Hood가 근거로 쓸 사무소 자료)" title="자료 추가"><svg viewBox="0 0 24 24" fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m20.5 11.5-8.2 8.2a5 5 0 0 1-7.1-7.1l8.6-8.6a3.4 3.4 0 0 1 4.8 4.8l-8.6 8.6a1.7 1.7 0 0 1-2.4-2.4l7.9-7.9"/></svg></button>
+          <label class="composer-toggle"><input type="checkbox" name="news" checked /><span class="track" aria-hidden="true"></span>기사 포함</label>
+          <button type="submit" class="composer-send" aria-label="보내기"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 19V5M6 11l6-6 6 6"/></svg></button>
+        </div>
       </form>
     </aside>
 
@@ -156,5 +140,6 @@
     <script src="app-hood.js"></script>
     <script src="app-people.js"></script>
     <script src="app-docs.js"></script>
+    <script src="app-public.js"></script>
   </body>
 </html>

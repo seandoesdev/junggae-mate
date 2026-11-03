@@ -78,23 +78,18 @@ def run():
         page.click("#listing-close-btn")
         expect(pins).to_have_count(12, timeout=10000)
 
-        # ── 질문 검색 → 답변(각주 출처) + 맞는 매물(지도 강조) ──
-        layer = page.locator("#ask-layer")
-        page.click("#ask-trigger")                                            # 질문 창: 뒤가 흐려지고 위에서 내려온다
-        expect(layer).to_have_class("ask-layer is-open")
-        expect(page.locator("#ask-q")).to_be_focused()
-        page.wait_for_timeout(400)
-        page.screenshot(path=str(IMAGES / "app-ask-open.png"))
-        page.mouse.click(300, 700)                                            # 바깥 아무 곳이나 누르면 닫힌다
-        expect(layer).not_to_have_class("ask-layer is-open")
-        page.keyboard.press("/")                                              # '/'로 다시 열기
-        expect(page.locator("#ask-q")).to_be_focused()
-        page.keyboard.press("Escape")
-        expect(layer).not_to_have_class("ask-layer is-open")
-        page.click("#ask-trigger")
-        page.fill("#ask-q", "마포구 8억 이하 59㎡ 학교 가까운 집")
-        page.press("#ask-q", "Enter")
-        expect(layer).not_to_have_class("ask-layer is-open")
+        # ── 상단 질문창은 없다. Hood Chat(지도 왼쪽 메뉴)에서 묻고 '지도에서 보기'로 맞는 매물을 지도에 강조 ──
+        assert page.locator("#ask-trigger, #ask-layer").count() == 0
+        page.click('[data-nav="ai"]')
+        page.mouse.move(760, 640)
+        expect(page.locator(".hood-kicker")).to_contain_text("Hood Chat")
+        expect(page.locator(".hood-hello")).to_contain_text("안녕하세요, 김선용")
+        page.wait_for_timeout(300)
+        page.screenshot(path=str(IMAGES / "app-hood-start.png"))
+        page.fill("#ai-form textarea", "마포구 8억 이하 59㎡ 학교 가까운 집")
+        page.press("#ai-form textarea", "Enter")
+        expect(page.locator("#ai-main .turn:not(.is-pending)")).to_have_count(1, timeout=15000)
+        page.click('#ai-main [data-act="hood-map"]')
         expect(side.locator("#ask-answer")).to_contain_text("마포초", timeout=15000)
         expect(side.locator(".cond")).to_have_count(4)
         assert side.locator("#ask-answer sup .srcref").count() >= 3, "답변 각주가 부족함"
@@ -114,6 +109,7 @@ def run():
         side.locator("#note-form textarea").fill("E2E 메모: 밤에 조용함")         # 현장 메모
         side.locator("#note-form button").click()
         expect(side.locator(".notes")).to_contain_text("E2E 메모", timeout=10000)
+        expect(side.locator("#pub-sec .pub")).to_be_visible(timeout=10000)   # 공공데이터 섹션
         side.locator("[data-act=back]").click()                               # 질문 결과로 (뺀 조건 유지)
         expect(side.locator("#ask-answer")).to_be_visible(timeout=10000)
         expect(side.locator("[data-act=ask-reset]")).to_be_visible()
@@ -121,9 +117,14 @@ def run():
         expect(page.locator("#match-bar")).to_be_hidden()
 
         # ── 지역 이름: 사무소 밖 지역은 지도를 그 지역으로 옮기고, 없다는 사실과 지금 있는 곳을 알려 준다 ──
-        page.click("#ask-trigger")
-        page.fill("#ask-q", "동탄 매물 보여줘")
-        page.press("#ask-q", "Enter")
+        page.keyboard.press("/")                                              # '/' → Ask Hood 패널
+        expect(page.locator("#hood-panel")).to_have_attribute("aria-hidden", "false")
+        page.click('#hood-panel [data-act="hood-new"]')
+        page.fill("#hood-q", "동탄 매물 보여줘")
+        page.press("#hood-q", "Enter")
+        expect(page.locator("#hood-body .turn:not(.is-pending)")).to_have_count(1, timeout=15000)
+        page.click('#hood-body [data-act="hood-map"]')
+        page.click('#hood-panel [data-act="hood-close"]')
         expect(side.locator("#ask-answer")).to_contain_text("마포구", timeout=15000)
         expect(page.locator("#map .place-tag")).to_contain_text("동탄")
         expect(side.locator("#ask-listings")).to_contain_text("등록된 매물이 없습니다")
@@ -133,9 +134,11 @@ def run():
         page.hover('[data-nav="ai"]')
         expect(page.locator(".nav-menu")).to_be_visible()
         expect(page.locator(".nav-menu")).to_contain_text("사용량")
+        expect(page.locator('[data-nav="ai"]')).to_contain_text("Hood AI")
         page.click('[data-nav="ai"]')
         page.mouse.move(760, 640)
         expect(page.locator(".nav-menu")).to_be_hidden()
+        expect(page.locator(".hood-hello")).to_be_visible()                  # 패널·이전 대화를 잇지 않고 새 대화로 시작
         page.fill("#ai-form textarea", "마포구 59㎡ 집")
         page.press("#ai-form textarea", "Enter")
         expect(page.locator("#ai-main .turn:not(.is-pending)")).to_have_count(1, timeout=15000)
@@ -151,7 +154,8 @@ def run():
         page.click("[data-nav=deals]")
         page.click("#ask-hood-btn")
         expect(page.locator("#hood-panel")).to_have_attribute("aria-hidden", "false")
-        page.click("#hood-history-btn")
+        assert page.locator("#hood-history-btn").count() == 0                # 상단 시계는 없다 (패널 안에만)
+        page.click('#hood-panel [data-act="hood-history"]')
         page.locator(".hood-hist button", has_text="마포구 59㎡ 집").click()
         expect(page.locator("#hood-body .turn")).to_have_count(2)
         page.fill("#hood-q", "그중 공원 가까운 곳")
@@ -170,6 +174,35 @@ def run():
         expect(page.locator(".notice")).to_contain_text("관리자만", timeout=10000)
         page.evaluate("location.hash = '#/ai/reports'")
         expect(page.locator(".tabs")).to_contain_text("검토 중", timeout=10000)
+
+        # 매물 상세의 공공데이터: C 공덕역세권에 단지 후보를 확정 → Hood 답변에 세대수가 근거와 함께 나온다
+        page.evaluate("location.hash = '#/map'")
+        page.click("#view-map [data-scope=all]")
+        page.locator("#map-side .lrow", has_text="공덕역세권").click()
+        pub = page.locator("#pub-sec")
+        expect(pub.locator('select[data-kind="complex"]')).to_be_visible(timeout=10000)
+        pub.locator('[data-act="pub-link"][data-kind="complex"]').click()
+        expect(pub.locator('[data-act="pub-unlink"][data-kind="complex"]')).to_be_visible(timeout=10000)   # 확정됨
+        expect(pub.locator("dd").first).to_contain_text("254세대")
+        expect(pub).to_contain_text("전세 3건")
+        station_checks = pub.locator('input[name="station_ids"]')
+        assert station_checks.count() >= 2, "공덕역 노선 후보가 2개보다 적음"
+        pub.locator('[data-act="pub-link"][data-kind="station"]').click()
+        expect(page.locator("#toast")).to_contain_text("1개 이상", timeout=5000)
+        station_checks.nth(0).check()
+        station_checks.nth(1).check()
+        pub.locator('[data-act="pub-link"][data-kind="station"]').click()
+        expect(pub.locator('[data-act="pub-unlink"][data-kind="station"]')).to_be_visible(timeout=10000)
+        expect(pub).to_contain_text("5호선")
+        expect(pub).to_contain_text("6호선")
+        page.screenshot(path=str(IMAGES / "app-public-data.png"))
+        page.click("#ask-hood-btn")
+        page.click('#hood-panel [data-act="hood-new"]')
+        page.fill("#hood-q", "공덕역세권 세대수와 전세 시세")
+        page.press("#hood-q", "Enter")
+        expect(page.locator("#hood-body .turn:not(.is-pending)")).to_contain_text("254세대", timeout=15000)
+        expect(page.locator("#hood-body .turn")).to_contain_text("전세 3건")
+        page.click('#hood-panel [data-act="hood-close"]')
 
         # ── 거래 ──
         page.click("[data-nav=deals]")
@@ -257,6 +290,58 @@ def run():
         page.evaluate("location.hash = '#/map'")
         page.wait_for_timeout(800)
         page.screenshot(path=str(IMAGES / "app-map-mobile.png"))
+
+        # 휴대폰의 출처 시트: 대화상자로 동작(뒤 화면 스크롤 고정, Tab 가두기, 닫으면 연 버튼으로 포커스 복귀)
+        page.locator("#map-side .lrow", has_text="마포한강뷰").first.click()   # 단지·역·전월세 근거가 있는 매물
+        src = page.locator("#pub-sec .srcref").first
+        expect(src).to_be_visible(timeout=10000)
+        src.click()
+        drawer = page.locator("#drawer")
+        expect(drawer).to_have_attribute("role", "dialog")
+        expect(drawer).to_have_attribute("aria-modal", "")
+        assert page.evaluate("document.body.classList.contains('sheet-open')")
+        for _ in range(8):
+            page.keyboard.press("Tab")
+            assert page.evaluate("document.getElementById('drawer').contains(document.activeElement)"), "포커스가 시트 밖으로 나감"
+        page.wait_for_timeout(350)                                          # 열림 애니메이션이 끝난 뒤
+        page.screenshot(path=str(IMAGES / "app-source-mobile.png"))
+        page.mouse.click(195, 80)                                           # 어둡게 덮인 바깥을 누르면 닫힌다
+        expect(drawer).to_be_hidden()
+        src.click()
+        expect(drawer).to_be_visible()
+        page.keyboard.press("Escape")
+        expect(drawer).to_be_hidden()
+        assert not page.evaluate("document.body.classList.contains('sheet-open')")
+        assert page.evaluate("document.activeElement.classList.contains('srcref')"), "닫은 뒤 포커스가 출처 버튼으로 돌아오지 않음"
+
+        # 관리자 공공데이터 운영 화면: 키를 노출하지 않고 수집 폼·작업 이력을 제공한다
+        page.click('[data-act="logout"]')
+        page.fill("#login-email", "admin@hanul.test")
+        page.fill("#login-password", "demo1234")
+        page.click("#login-btn")
+        expect(page.locator('[data-nav="public"]')).to_be_visible()
+        page.click('[data-nav="public"]')
+        expect(page.locator("#view-public form[data-collect]")).to_have_count(5, timeout=10000)
+        expect(page.locator("#public-jobs")).not_to_contain_text("불러오는 중", timeout=10000)
+        assert "API 키 값" in page.locator("#view-public").inner_text()
+        assert "serviceKey" not in page.locator("#view-public").inner_text()
+        sw = page.evaluate("[document.documentElement.scrollWidth, document.documentElement.clientWidth]")
+        assert sw[0] <= sw[1], f"모바일 가로 넘침 #/public: {sw}"
+
+        # 관리자 지도 기본 범위는 사무소 전체이고, 공공데이터 오류는 재시도 상태로 바뀐다
+        expected_error_at = len(errors)
+        page.route("**/api/listings/1/public", lambda route: route.fulfill(
+            status=503, content_type="application/json", body='{"detail":"공공데이터 점검 중"}'))
+        page.evaluate("location.hash = '#/map/l/1'")
+        expect(page.locator('#view-map [data-scope="all"]')).to_have_attribute("aria-pressed", "true", timeout=10000)
+        expect(page.locator("#pub-sec .pub-error")).to_be_visible(timeout=10000)
+        expect(page.locator('#pub-sec [data-act="pub-retry"]')).to_be_visible()
+        page.unroute("**/api/listings/1/public")
+        page.click('#pub-sec [data-act="pub-retry"]')
+        expect(page.locator("#pub-sec .pub")).to_be_visible(timeout=10000)
+        forced_errors = errors[expected_error_at:]
+        assert forced_errors and all("503" in error for error in forced_errors), forced_errors
+        del errors[expected_error_at:]
         assert not errors, f"Browser errors: {errors}"
         browser.close()
 
