@@ -3,6 +3,8 @@
 질문 하나는 assistant.answer가 답한다. 여기서는 그 답을 대화에 쌓고, 설정을 적용하고, 사용량을 기록에서 계산한다.
 날짜는 한국 시간(Asia/Seoul) 기준으로 센다.
 """
+import hashlib
+import time
 from datetime import timedelta
 
 from . import assistant, drafting
@@ -67,7 +69,19 @@ def _follow_up(q: str) -> str | None:
     return None
 
 
-def ask(conn, user, q: str, *, drop: list[str] | None = None, session_id: int | None = None) -> dict:
+def _trace(conn, user, query: str, result: dict, latency_ms: int) -> None:
+    """검색 추적 (설계서 14.3): 질문 원문 대신 해시, 실행 경로, 사용 근거, 게이트, 응답 시간."""
+    conn.execute(
+        """INSERT INTO retrieval_traces (tenant_id, user_id, query_hash, routes, evidence_ids, gate_status,
+                                         listing_count, stale_count, latency_ms, generator)
+           VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+        (user.tenant_id, user.id, hashlib.sha256(query.encode()).hexdigest()[:32], result.get("routes", []),
+         [s["id"] for s in result["sources"]], result["gate"]["status"], len(result["listings"]),
+         result.get("stale_count", 0), latency_ms, result["generator"]))
+
+
+def ask(conn, user, q: str, *, drop: list[str] | None = None, session_id: int | None = None,
+        exclude_types: list[str] | None = None) -> dict:
     """질문 하나: 한도 확인 → 대화 불러오기·이어 묻기 → 답변 → 대화에 저장."""
     settings = get_settings(conn, user.tenant_id)
     if settings["monthly_limit"] and month_count(conn, user.tenant_id) >= settings["monthly_limit"]:
@@ -80,7 +94,11 @@ def ask(conn, user, q: str, *, drop: list[str] | None = None, session_id: int | 
     effective = q
     if last and (rest := _follow_up(q)) is not None:
         effective = f"{last['effective_query']} {rest}".strip()
+    started = time.perf_counter()
+    if exclude_types:  # 이번 질문에서만 뺄 자료 (예: '기사 포함'을 끈 경우)
+        settings = {**settings, "source_types": [t for t in settings["source_types"] if t not in exclude_types]}
     result = assistant.answer(conn, user, effective, dropped=drop or [], settings=settings)
+    _trace(conn, user, effective, result, round((time.perf_counter() - started) * 1000))
 
     if not session:
         session = conn.execute("INSERT INTO ai_sessions (tenant_id, user_id, title) VALUES (%s,%s,%s) RETURNING *",
@@ -163,7 +181,24 @@ def usage(conn, user, days: int = 14) -> dict:
         "by_user": sorted(({"name": k, "count": v} for k, v in by_user.items()), key=lambda x: -x["count"]),
         "by_source_type": [{"type": k, "count": v} for k, v in sorted(by_type.items(), key=lambda kv: -kv[1])],
         "monthly_limit": get_settings(conn, user.tenant_id)["monthly_limit"],
+        **_trace_summary(conn, user.tenant_id, month_start),
     }
+
+
+def _trace_summary(conn, tenant_id: int, month_start) -> dict:
+    """이번 달 검색 추적: 경로별 질문 수, 평균·p95 응답 시간, 오래된 공공데이터를 쓴 답변 수."""
+    rows = conn.execute(
+        """SELECT routes, latency_ms, stale_count FROM retrieval_traces
+           WHERE tenant_id = %s AND (created_at AT TIME ZONE 'Asia/Seoul')::date >= %s""", (tenant_id, month_start)).fetchall()
+    lat = sorted(r["latency_ms"] for r in rows)
+    by_route: dict[str, int] = {}
+    for r in rows:
+        for route in r["routes"]:
+            by_route[route] = by_route.get(route, 0) + 1
+    return {"traces": len(rows), "latency_avg_ms": round(sum(lat) / len(lat)) if lat else None,
+            "latency_p95_ms": lat[min(len(lat) - 1, int(len(lat) * 0.95))] if lat else None,
+            "stale_answers": sum(1 for r in rows if r["stale_count"]),
+            "by_route": sorted(({"route": k, "count": v} for k, v in by_route.items()), key=lambda x: -x["count"])}
 
 
 # ---------- 보고서 (고객 자료 목록) ----------

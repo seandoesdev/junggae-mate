@@ -138,6 +138,99 @@ CREATE TABLE IF NOT EXISTS apt_trades (
   UNIQUE (lawd_cd, complex_name, area_m2, price, deal_date, floor)
 );
 
+-- 공공데이터: 아파트 전월세 실거래가. 공공 원천이므로 tenant와 무관하게 공유한다.
+CREATE TABLE IF NOT EXISTS apt_rent_trades (
+  id                 BIGSERIAL PRIMARY KEY,
+  source_key         TEXT NOT NULL UNIQUE,
+  lawd_cd            TEXT NOT NULL,
+  district           TEXT NOT NULL,
+  dong               TEXT,
+  jibun              TEXT,
+  complex_name       TEXT NOT NULL,
+  area_m2            NUMERIC(8,2) NOT NULL,
+  floor              INT,
+  contract_date      DATE NOT NULL,
+  deposit            INT NOT NULL,
+  monthly_rent       INT NOT NULL DEFAULT 0,
+  rent_type          TEXT NOT NULL CHECK (rent_type IN ('jeonse', 'monthly')),
+  contract_type      TEXT,
+  contract_term      TEXT,
+  renewal_right_used TEXT,
+  previous_deposit   INT,
+  previous_rent      INT,
+  build_year         INT,
+  source             TEXT NOT NULL,
+  raw_payload        JSONB NOT NULL,
+  collected_at       TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS apt_rent_lookup_idx
+  ON apt_rent_trades (lawd_cd, complex_name, area_m2, contract_date DESC);
+CREATE INDEX IF NOT EXISTS apt_rent_type_idx
+  ON apt_rent_trades (rent_type, contract_date DESC);
+
+-- K-apt 공동주택 기본정보. 전체 사무소가 공유하는 원천 단지 마스터다.
+CREATE TABLE IF NOT EXISTS apartment_complexes (
+  kapt_code       TEXT PRIMARY KEY,
+  name            TEXT NOT NULL,
+  address         TEXT,
+  road_address    TEXT,
+  sale_type       TEXT,
+  heating_type    TEXT,
+  approval_date   DATE,
+  building_count  INT,
+  household_count INT,
+  total_area_m2   NUMERIC(14,2),
+  source          TEXT NOT NULL,
+  raw_payload     JSONB NOT NULL,
+  collected_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS apartment_complexes_name_idx
+  ON apartment_complexes USING gin (name gin_trgm_ops);
+
+-- 건축HUB 건축물대장 표제부. operation/PK를 보존해 명세 변경과 확장에 대비한다.
+CREATE TABLE IF NOT EXISTS building_register_records (
+  source_key        TEXT PRIMARY KEY,
+  source_record_id  TEXT,
+  operation         TEXT NOT NULL DEFAULT 'getBrTitleInfo',
+  sigungu_cd        TEXT NOT NULL,
+  bjdong_cd         TEXT NOT NULL,
+  plat_gb_cd        TEXT,
+  bun               TEXT,
+  ji                TEXT,
+  register_kind     TEXT,
+  building_name     TEXT,
+  lot_address       TEXT,
+  road_address      TEXT,
+  main_purpose      TEXT,
+  structure         TEXT,
+  total_area_m2     NUMERIC(14,2),
+  floor_area_m2     NUMERIC(14,2),
+  household_count   INT,
+  approval_date     DATE,
+  source            TEXT NOT NULL,
+  raw_payload       JSONB NOT NULL,
+  collected_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+ALTER TABLE building_register_records ADD COLUMN IF NOT EXISTS source_record_id TEXT;
+CREATE INDEX IF NOT EXISTS building_register_address_idx
+  ON building_register_records (sigungu_cd, bjdong_cd, bun, ji);
+CREATE INDEX IF NOT EXISTS building_register_name_idx
+  ON building_register_records USING gin (building_name gin_trgm_ops);
+
+-- TAGO 지하철역 검색 결과. 역 ID와 노선을 함께 식별자로 쓴다.
+CREATE TABLE IF NOT EXISTS subway_stations (
+  source_key       TEXT PRIMARY KEY,
+  station_id       TEXT NOT NULL,
+  station_name     TEXT NOT NULL,
+  route_id         TEXT,
+  route_name       TEXT,
+  source           TEXT NOT NULL,
+  raw_payload      JSONB NOT NULL,
+  collected_at     TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS subway_stations_name_idx
+  ON subway_stations USING gin (station_name gin_trgm_ops);
+
 -- 문서 근거 (자료실). tenant_id NULL = 공용 공개 문서
 CREATE TABLE IF NOT EXISTS documents (
   id              SERIAL PRIMARY KEY,
@@ -266,3 +359,36 @@ CREATE TABLE IF NOT EXISTS ai_messages (
 );
 CREATE INDEX IF NOT EXISTS ai_messages_session_idx ON ai_messages (session_id, id);
 CREATE INDEX IF NOT EXISTS ai_messages_created_idx ON ai_messages (created_at);
+
+-- 매물 ↔ 공공 원천 연결 (설계서 8.2 entity_links). 후보는 시스템이 제시하고, 확정은 사람이 한다(자동 확정 없음).
+CREATE TABLE IF NOT EXISTS entity_links (
+  id            SERIAL PRIMARY KEY,
+  tenant_id     INT NOT NULL REFERENCES tenants(id),
+  listing_id    INT NOT NULL REFERENCES listings(id) ON DELETE CASCADE,
+  kind          TEXT NOT NULL CHECK (kind IN ('complex', 'building', 'station')),
+  entity_key    TEXT NOT NULL,             -- complex: kapt_code, building: source_key, station: station_id
+  label         TEXT NOT NULL,
+  match_method  TEXT NOT NULL DEFAULT 'manual' CHECK (match_method IN ('manual', 'suggested')),
+  confidence    NUMERIC(4,3),
+  confirmed_by  INT REFERENCES users(id),
+  confirmed_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE (listing_id, kind)
+);
+CREATE INDEX IF NOT EXISTS entity_links_tenant_idx ON entity_links (tenant_id, kind);
+
+-- 검색 추적 (설계서 14.3). 질문 원문은 넣지 않고 해시만 남긴다.
+CREATE TABLE IF NOT EXISTS retrieval_traces (
+  id             BIGSERIAL PRIMARY KEY,
+  tenant_id      INT NOT NULL REFERENCES tenants(id),
+  user_id        INT REFERENCES users(id),
+  query_hash     TEXT NOT NULL,
+  routes         TEXT[] NOT NULL DEFAULT '{}',
+  evidence_ids   TEXT[] NOT NULL DEFAULT '{}',
+  gate_status    TEXT NOT NULL,
+  listing_count  INT NOT NULL DEFAULT 0,
+  stale_count    INT NOT NULL DEFAULT 0,
+  latency_ms     INT NOT NULL,
+  generator      TEXT NOT NULL,
+  created_at     TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS retrieval_traces_tenant_idx ON retrieval_traces (tenant_id, created_at DESC);

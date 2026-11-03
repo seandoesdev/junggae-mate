@@ -65,7 +65,7 @@ def _deal(client, h, listing_id, customer_name):
 
 
 def _tokens(text):
-    return re.findall(r"\[([clt]\d+)\]", text)
+    return re.findall(r"\[([cltrkbs]\d+)\]", text)
 
 
 # ---------- 인증·격리 ----------
@@ -458,3 +458,161 @@ def test_hood_settings_usage_and_reports(client, kim, admin, C):
     reps = client.get("/api/reports", headers=kim).json()
     assert reps["counts"]["all"] == len(reps["items"]) >= 1
     assert all(x["state"] in ("approved", "shared") for x in client.get("/api/reports?state=done", headers=kim).json()["items"])
+
+
+# ---------- 구조화 공공데이터 evidence·매물 연결·검색 추적 ----------
+
+def test_structured_evidence_routing(client, kim, L):
+    rent = client.post("/api/search", headers=kim, json={"q": "마포한강뷰 전세 시세 어때?"}).json()
+    assert "rent" in rent["routes"] and f"r{L['A']}" in {s["id"] for s in rent["sources"]}
+    assert "전세 3건" in rent["opinion"] and "월세 1건" in rent["opinion"]
+    src = next(s for s in rent["sources"] if s["id"] == f"r{L['A']}")
+    assert src["kind"] == "structured" and src["source_id"] == "15126474" and src["value"]["jeonse_count"] == 3
+    assert set(_tokens(rent["opinion"])) <= {s["id"] for s in rent["sources"]}
+    # 전세 금액은 매매 가격 조건으로 쓰지 않는다
+    budget = client.post("/api/search", headers=kim, json={"q": "마포구 전세 5억 이하"}).json()
+    assert "price" not in {c["key"] for c in budget["understood"]}
+    assert any("매매 매물 가격 조건으로 쓰지 않았습니다" in t for t in budget["to_check"])
+    # 연결된 단지(K-apt)와 역(TAGO)
+    cx = client.post("/api/search", headers=kim, json={"q": "마포한강뷰 세대수랑 몇 호선이야?"}).json()
+    assert {"complex", "station"} <= set(cx["routes"]) and "612세대" in cx["opinion"] and "6호선" in cx["opinion"]
+    assert cx["listings"][0]["public"]["complex"]["household_count"] == 612
+    # 연결하지 않은 매물은 단정하지 않고 확인할 사항으로
+    nolink = client.post("/api/search", headers=kim, json={"q": "공덕역세권 세대수"}).json()
+    assert any("연결하지 않았습니다" in t for t in nolink["to_check"])
+
+
+def test_listing_links_candidates_and_permissions(client, kim, park, other, L):
+    pub = client.get(f"/api/listings/{L['C']}/public", headers=kim).json()
+    assert pub["links"] == {} and pub["can_edit"] is True
+    assert pub["candidates"]["complex"][0]["label"] == "공덕역세권" and pub["facts"]["rent"]["value"]["jeonse_count"] == 3
+    station_key = pub["candidates"]["station"][0]["entity_key"]
+    assert station_key.startswith("MTR") and "공덕" in pub["candidates"]["station"][0]["label"]
+    key = pub["candidates"]["complex"][0]["entity_key"]
+    assert client.put(f"/api/listings/{L['C']}/links/complex", headers=park, json={"entity_key": key}).status_code == 403
+    assert client.put(f"/api/listings/{L['C']}/links/complex", headers=kim, json={"entity_key": "NOPE"}).status_code == 422
+    link = client.put(f"/api/listings/{L['C']}/links/complex", headers=kim, json={"entity_key": key}).json()
+    assert link["match_method"] == "suggested" and link["confirmed_by"] == "김선용"
+    after = client.get(f"/api/listings/{L['C']}/public", headers=kim).json()
+    assert after["facts"]["complex"]["value"]["household_count"] == 254
+    assert after["facts"]["complex"]["evidence"]["id"] == f"k{L['C']}"
+    station_ids = [c["entity_key"] for c in pub["candidates"]["station"] if "공덕" in c["label"]][:4]
+    grouped_station_key = "station_ids:" + ",".join(station_ids)
+    station_link = client.put(f"/api/listings/{L['C']}/links/station", headers=kim,
+                              json={"entity_key": grouped_station_key}).json()
+    assert station_link["entity_key"] == grouped_station_key
+    station_fact = client.get(f"/api/listings/{L['C']}/public", headers=kim).json()["facts"]["station"]
+    assert station_fact["value"]["station"] == "공덕" and len(station_fact["value"]["station_ids"]) >= 2
+    assert {"5호선", "6호선"} <= set(station_fact["value"]["routes"])
+    invalid_group = f"station_ids:{station_ids[0]},MTRS15530"  # 공덕 + 애오개
+    assert client.put(f"/api/listings/{L['C']}/links/station", headers=kim,
+                      json={"entity_key": invalid_group}).status_code == 422
+    assert client.delete(f"/api/listings/{L['C']}/links/station", headers=kim).status_code == 200
+    assert client.get(f"/api/listings/{L['C']}/public", headers=other).status_code == 404   # 다른 사무소
+    assert client.delete(f"/api/listings/{L['C']}/links/complex", headers=kim).status_code == 200
+    assert client.get(f"/api/listings/{L['C']}/public", headers=kim).json()["links"] == {}
+
+
+def test_rent_evidence_uses_collected_lawd_outside_mvp_regions(client, kim):
+    source_key = "test-rent-busan-haeundae"
+    with tx() as conn:
+        conn.execute(
+            """INSERT INTO apt_rent_trades
+               (source_key, lawd_cd, district, dong, complex_name, area_m2, contract_date, deposit,
+                monthly_rent, rent_type, source, raw_payload)
+               VALUES (%s,'26350','26350','우동','부산전국검증',59.9,current_date,42000,0,'jeonse','테스트','{}'::jsonb)""",
+            (source_key,),
+        )
+        conn.execute(
+            """INSERT INTO apt_rent_trades
+               (source_key, lawd_cd, district, dong, complex_name, area_m2, contract_date, deposit,
+                monthly_rent, rent_type, source, raw_payload)
+               VALUES ('test-rent-busan-distractor','26440','26440','대연동','부산다른단지',59.9,
+                       current_date,39000,0,'jeonse','테스트','{}'::jsonb)"""
+        )
+    listing = client.post("/api/listings", headers=kim, json={
+        "title": "부산전국검증 59", "complex_name": "부산전국검증", "address": "부산 해운대구 우동 1",
+        "district": "해운대구", "price": 70000, "area_m2": 59.9, "lat": 35.163, "lng": 129.163,
+    }).json()
+    try:
+        rent = client.get(f"/api/listings/{listing['id']}/public", headers=kim).json()["facts"]["rent"]
+        assert rent["value"]["jeonse_count"] == 1 and "4.2억" in rent["evidence"]["snippet"]
+    finally:
+        with tx() as conn:
+            conn.execute("DELETE FROM listings WHERE id = %s", (listing["id"],))
+            conn.execute("DELETE FROM apt_rent_trades WHERE source_key = %s", (source_key,))
+            conn.execute("DELETE FROM apt_rent_trades WHERE source_key = 'test-rent-busan-distractor'")
+
+
+def test_rent_lawd_uses_collected_dong_when_district_is_only_a_code(client, kim):
+    """실제 전월세 응답은 구 이름 없이 시군구 코드만 준다. 같은 시·도 두 구에 같은 이름 단지가 있으면
+    수집된 법정동이 주소에 있는 쪽을 쓰고, 판별할 수 없으면 근거를 붙이지 않는다(틀린 지역 결합 금지)."""
+    rows = [("test-twin-haeundae", "26350", "우동", 42000), ("test-twin-nam", "26290", "대연동", 31000)]
+    with tx() as conn:
+        for key, code, dong, deposit in rows:
+            conn.execute(
+                """INSERT INTO apt_rent_trades (source_key, lawd_cd, district, dong, complex_name, area_m2, contract_date,
+                                                deposit, monthly_rent, rent_type, source, raw_payload)
+                   VALUES (%s,%s,%s,%s,'쌍둥이단지',59.9,current_date,%s,0,'jeonse','테스트','{}'::jsonb)""",
+                (key, code, code, dong, deposit))
+    made = []
+    try:
+        for address in ("부산 해운대구 우동 77", "부산 해운대구 해변로 77"):
+            made.append(client.post("/api/listings", headers=kim, json={
+                "title": "쌍둥이단지 59", "complex_name": "쌍둥이단지", "address": address, "district": "해운대구",
+                "price": 70000, "area_m2": 59.9, "lat": 35.163, "lng": 129.163}).json()["id"])
+        with_dong = client.get(f"/api/listings/{made[0]}/public", headers=kim).json()["facts"]["rent"]
+        assert with_dong and "4.2억" in with_dong["evidence"]["snippet"]        # 해운대구(우동) 사례
+        assert client.get(f"/api/listings/{made[1]}/public", headers=kim).json()["facts"]["rent"] is None
+    finally:
+        with tx() as conn:
+            conn.execute("DELETE FROM listings WHERE id = ANY(%s)", (made,))
+            conn.execute("DELETE FROM apt_rent_trades WHERE source_key LIKE 'test-twin-%%'")
+
+
+def test_public_candidates_prefer_listing_region(client, kim, L):
+    with tx() as conn:
+        conn.execute(
+            """INSERT INTO apartment_complexes
+               (kapt_code, name, address, source, raw_payload)
+               VALUES ('TEST-BUSAN-CX','공덕역세권','부산광역시 중구 공덕로 1','테스트','{}'::jsonb)"""
+        )
+        conn.execute(
+            """INSERT INTO building_register_records
+               (source_key, operation, sigungu_cd, bjdong_cd, building_name, lot_address, source, raw_payload)
+               VALUES ('TEST-BUSAN-BLD','getBrTitleInfo','26110','10100','공덕역세권',
+                       '부산광역시 중구 공덕로 1','테스트','{}'::jsonb)"""
+        )
+    try:
+        candidates = client.get(f"/api/listings/{L['C']}/public", headers=kim).json()["candidates"]
+        assert candidates["complex"][0]["entity_key"] != "TEST-BUSAN-CX"
+        assert candidates["building"][0]["entity_key"] != "TEST-BUSAN-BLD"
+        assert "마포구" in candidates["complex"][0]["detail"]
+        assert "마포구" in candidates["building"][0]["detail"]
+    finally:
+        with tx() as conn:
+            conn.execute("DELETE FROM apartment_complexes WHERE kapt_code = 'TEST-BUSAN-CX'")
+            conn.execute("DELETE FROM building_register_records WHERE source_key = 'TEST-BUSAN-BLD'")
+
+
+def test_stale_public_data_and_traces(client, kim, L):
+    with tx() as conn:
+        conn.execute("UPDATE apartment_complexes SET collected_at = now() - interval '400 days' WHERE kapt_code = 'A10027001'")
+    r = client.post("/api/search", headers=kim, json={"q": "마포한강뷰 사용승인일"}).json()
+    k = next(s for s in r["sources"] if s["id"] == f"k{L['A']}")
+    assert k["state"] == "stale" and "다시 수집" in k["note"] and r["stale_count"] >= 1
+    assert any("오래된 수집본" in t for t in r["to_check"])
+    with tx() as conn:
+        conn.execute("UPDATE apartment_complexes SET collected_at = now() WHERE kapt_code = 'A10027001'")
+        t = conn.execute("SELECT * FROM retrieval_traces ORDER BY id DESC LIMIT 1").fetchone()
+    assert "complex" in t["routes"] and t["stale_count"] >= 1 and t["latency_ms"] >= 0 and len(t["query_hash"]) == 32
+    no_news = client.post("/api/search", headers=kim, json={"q": "마포구 아파트 시세 동향", "exclude_types": ["news"]}).json()
+    assert all(s["type"] != "news" for s in no_news["sources"])
+    u = client.get("/api/ai/usage", headers=kim).json()
+    assert u["traces"] >= 1 and u["latency_avg_ms"] is not None and any(x["route"] == "complex" for x in u["by_route"])
+
+
+def test_compare_report_includes_linked_complex(client, kim, C):
+    rep = client.post(f"/api/customers/{C['김하늘']}/reports", headers=kim, json={"kind": "compare"}).json()
+    a = next(l for l in rep["listings"] if l["label"] == "A")
+    assert a["public"]["complex"]["household_count"] == 612 and "612세대" in rep["opinion"]

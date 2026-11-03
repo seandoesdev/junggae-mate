@@ -12,9 +12,22 @@ TRADE_URL = "https://apis.data.go.kr/1613000/RTMSDataSvcAptTradeDev/getRTMSDataS
 TRADE_SOURCE = "국토교통부 아파트 매매 실거래가 (data.go.kr 15126468)"
 TRADE_PAGE_SIZE = 1000
 MAX_TRADE_PAGES = 100
+TRADE_UNAVAILABLE_MESSAGE = "실거래가 수집에 실패했습니다. 승인 상태와 요청 조건을 확인해 주세요."
 
-# 법정동 코드 앞 5자리 → 구 이름 (MVP 범위)
+# 시연 데이터와 매매 파서가 사람이 읽을 수 있는 이름을 만들 때 쓰는 알려진 코드다.
+# 전월세 근거 조회는 이 목록에 의존하지 않고 DB에 실제 적재된 법정동 코드를
+# 매물 주소와 대조한다(see structured._rent_lawd_cd).
 LAWD = {"11440": "마포구", "11410": "서대문구", "11170": "용산구", "11560": "영등포구"}
+
+# 법정동 코드 앞 두 자리의 광역자치단체. 구 이름이 전국에서 중복될 때 매물
+# 주소의 시·도와 함께 안전하게 코드를 고르는 용도다. 강원/전북의 구·신 코드도
+# 모두 받아 이미 수집된 과거 자료와 현재 자료를 함께 처리한다.
+LAWD_REGION = {
+    "11": "서울", "26": "부산", "27": "대구", "28": "인천", "29": "광주", "30": "대전",
+    "31": "울산", "36": "세종", "41": "경기", "42": "강원", "43": "충북", "44": "충남",
+    "45": "전북", "46": "전남", "47": "경북", "48": "경남", "50": "제주", "51": "강원",
+    "52": "전북",
+}
 
 
 class ExternalUnavailable(RuntimeError):
@@ -133,7 +146,15 @@ def fetch_trades(lawd_cd: str, deal_ymd: str) -> list[dict]:
             page_no += 1
         else:
             raise ExternalUnavailable(f"실거래가 API 페이지가 안전 한도({MAX_TRADE_PAGES})를 초과했습니다.")
-    except (httpx.HTTPError, ET.ParseError, ExternalUnavailable) as e:
+    except httpx.HTTPError as e:
+        # HTTPStatusError 문자열에는 serviceKey가 든 전체 요청 URL이 포함될 수
+        # 있으므로 외부로 전달되는 메시지는 고정한다.
+        trade_breaker.failure()
+        raise ExternalUnavailable(TRADE_UNAVAILABLE_MESSAGE) from e
+    except ET.ParseError as e:
+        trade_breaker.failure()
+        raise ExternalUnavailable(TRADE_UNAVAILABLE_MESSAGE) from e
+    except ExternalUnavailable as e:
         trade_breaker.failure()
         raise ExternalUnavailable(f"실거래가 수집 실패: {e}") from e
     trade_breaker.success()

@@ -11,7 +11,7 @@ import re
 import statistics
 from datetime import date, timedelta
 
-from . import drafting, llm, places, rag
+from . import drafting, llm, places, rag, structured
 from .drafting import Body, eok, josa
 from .embedding import embed
 
@@ -34,6 +34,13 @@ WANTS = {
     "가격 조정": (("급매", "가격 조정", "가격 내린", "가격이 내린", "싸게"), ()),
 }
 LISTING_WORDS = ("매물", "집", "아파트", "단지", "찾아", "추천", "보여", "있나", "있어", "있을까", "볼 만", "살 만", "평", "㎡", "억")
+# 구조화 공공데이터 라우팅 (설계서 9.2): 필요한 캐시만 읽는다
+STRUCT_WORDS = {
+    "rent": ("전세", "월세", "전월세", "임대", "보증금"),
+    "complex": ("세대수", "몇 세대", "난방", "사용승인", "준공", "연식", "동수", "단지 정보", "단지정보"),
+    "building": ("건축물대장", "주용도", "용도", "구조", "위반건축"),
+    "station": ("호선", "노선", "지하철"),
+}
 MARKET_WORDS = ("시세", "실거래", "동향", "오르", "내리", "하락", "상승", "전망", "기사", "뉴스", "분위기", "시장")
 FIRST_HOME_WORDS = ("생애최초", "생애 최초", "첫 집", "첫집", "처음 사는", "처음 집")
 PYEONG_TO_M2 = 3.3058 * 0.75  # 공급 평형 → 전용면적 근사 (25평형 ≈ 전용 62㎡)
@@ -399,6 +406,46 @@ BROWSE_WORDS = ("매물", "보여", "찾아", "목록", "전체", "리스트")
 DEFAULT_SETTINGS = {"source_types": ["law", "policy", "office", "news"], "detail_count": 3, "near_miss": True}
 
 
+def _structured_sentences(body: Body, l: dict, fx: dict, want: dict, routes: list[str]) -> None:
+    """질문이 묻는 구조화 근거만 문장으로 붙인다. 연결·수집이 안 된 것은 '추가로 확인할 사항'으로 돌린다."""
+    name = f"{l['label']} {l['title']}"
+    if want["rent"]:
+        routes.append("rent")
+        if fx["rent"]:
+            v, ev = fx["rent"]["value"], fx["rent"]["evidence"]
+            eid = body.add(ev)
+            parts = []
+            if v["jeonse_count"]:
+                parts.append(f"전세 {v['jeonse_count']}건, 보증금 중위 {eok(v['jeonse_median'])}")
+            if v["monthly_count"]:
+                parts.append(f"월세 {v['monthly_count']}건, 보증금 중위 {eok(v['monthly_deposit_median'])}·월 {v['monthly_rent_median']}만 원")
+            tail = " 표본이 적어 사례로만 봐 주세요." if ev["state"] == "warning" else ""
+            body.say(f"같은 단지 비슷한 면적의 최근 12개월 전월세 신고는 {', '.join(parts)}입니다.{tail}", [eid])
+        else:
+            body.check(f"{name}의 전월세 신고 자료가 아직 수집되지 않았습니다 (관리자 수집 필요)")
+    for kind, say in (("complex", lambda v: "단지는 " + ", ".join(x for x in [
+                          f"{v['household_count']}세대" if v.get("household_count") else None,
+                          f"{v['building_count']}개 동" if v.get("building_count") else None,
+                          f"난방 {v['heating_type']}" if v.get("heating_type") else None,
+                          f"사용승인 {v['approval_date']}" if v.get("approval_date") else None] if x) + "입니다."),
+                      ("building", lambda v: "건축물대장상 " + ", ".join(x for x in [
+                          f"주용도 {v['main_purpose']}" if v.get("main_purpose") else None,
+                          f"구조 {v['structure']}" if v.get("structure") else None,
+                          f"사용승인 {v['approval_date']}" if v.get("approval_date") else None] if x) + "입니다."),
+                      ("station", lambda v: f"{v['station']}에는 {'·'.join(v['routes']) or '노선 정보 없음'}이 다닙니다.")):
+        if not want[kind]:
+            continue
+        routes.append(kind)
+        if fx[kind]:
+            body.say(f"{name} {say(fx[kind]['value'])}", [body.add(fx[kind]["evidence"])])
+        elif kind not in fx["links"]:
+            body.check(f"{name}에 {structured.KIND_LABEL[kind]}를 아직 연결하지 않았습니다. 매물 상세의 '공공데이터'에서 연결")
+        else:
+            body.check(f"{name}에 연결한 {structured.KIND_LABEL[kind]} 자료를 찾지 못했습니다. 다시 수집 필요")
+    if any(fx[k] and fx[k]["evidence"]["state"] == "stale" for k in ("rent", "complex", "building", "station")):
+        body.check(f"{name}의 공공데이터 중 오래된 수집본이 있습니다. 출처의 수집일 확인")
+
+
 def _office_summary(conn, tenant_id: int) -> str:
     rows = conn.execute("""SELECT district, count(*)::int AS n FROM listings WHERE tenant_id = %s AND status = 'active'
                            GROUP BY district ORDER BY n DESC""", (tenant_id,)).fetchall()
@@ -419,6 +466,11 @@ def answer(conn, user, query: str, *, customer: dict | None = None, quote_id: st
     f = drop(_merge_customer(f, customer, listing_intent), dropped or [])
     policy_q = rag.is_policy_question(q) or f["first_home"]
     market_q = any(w in q for w in MARKET_WORDS)
+    want = {k: any(w in q for w in ws) for k, ws in STRUCT_WORDS.items()}
+    # 전세·월세 질문의 금액은 보증금 이야기다. 매매 매물 가격 조건으로 쓰지 않는다
+    rent_budget = want["rent"] and bool(f["price_max"] or f["price_min"])
+    if rent_budget:
+        f = drop(f, ["price"])
 
     browse = bool(dropped) or (not has_conditions(f) and not f["wants"] and not policy_q and any(w in q for w in BROWSE_WORDS))
     listings, relaxed = (find_listings(conn, user, f, q, as_of, browse=browse, near_miss=cfg["near_miss"])
@@ -427,9 +479,11 @@ def answer(conn, user, query: str, *, customer: dict | None = None, quote_id: st
     region = drafting.region_of(f["district"] or (customer or {}).get("district"))
     # 매물만 찾는 질문이면 법령·정책 문서를 붙이지 않는다 (관련 없는 정책 경고가 답변에 섞이지 않도록)
     doc_q = policy_q or market_q or bool(quote_id) or not listing_intent
-    hits = rag.search(conn, user.tenant_id, q, region=region, as_of=as_of, k=8) if doc_q else []
+    hits = (rag.search(conn, user.tenant_id, q, region=region, as_of=as_of, k=8,
+                       source_types=cfg["source_types"]) if doc_q else [])
     if f["first_home"] and not any("주택가격" in h["text"] for h in hits):
-        hits += rag.search(conn, user.tenant_id, "생애최초 주택가격 9억 원 이하 주택 구입 대출 지원", region=region, as_of=as_of, k=6)
+        hits += rag.search(conn, user.tenant_id, "생애최초 주택가격 9억 원 이하 주택 구입 대출 지원",
+                           region=region, as_of=as_of, k=6, source_types=cfg["source_types"])
     if quote_id:
         quoted = drafting.get_chunk(conn, user.tenant_id, quote_id)
         if not quoted:
@@ -437,7 +491,7 @@ def answer(conn, user, query: str, *, customer: dict | None = None, quote_id: st
         hits = [quoted] + hits
     else:
         quoted = None
-    hits = [h for h in _dedupe(hits) if h is quoted or h["source_type"] in cfg["source_types"]]  # 설정: 답변에 쓸 자료
+    hits = [h for h in _dedupe(hits) if h is quoted or h["source_type"] in cfg["source_types"]]  # 명시 인용은 설정 밖 자료도 유지
     gate = (rag.evidence_gate(hits, as_of=as_of, policy_question=policy_q) if doc_q
             else {"status": "ok", "messages": [], "evidence": {}, "findings": []})
     ev_of = lambda h: gate["evidence"][f"c{h['id']}"]  # noqa: E731
@@ -447,6 +501,9 @@ def answer(conn, user, query: str, *, customer: dict | None = None, quote_id: st
         body.say(drafting._lead(quoted["text"]), [body.add(ev_of(quoted))])
     shown = listings[:cfg["detail_count"]]
     refs = {l["id"]: drafting.trade_reference(conn, l) for l in listings}
+    facts: dict[int, dict] = {}
+    routes = (["listing"] if listing_intent else []) + (["trade"] if any(refs[l["id"]] for l in shown) else []) \
+        + (["document"] if doc_q else [])
 
     # 1) 매물 (구조화 사실 + 현장 메모 + 단지를 언급한 사무소 자료)
     if listing_intent:
@@ -486,6 +543,10 @@ def answer(conn, user, query: str, *, customer: dict | None = None, quote_id: st
                 ref = refs[l["id"]]
                 body.say(f"같은 단지 비슷한 면적의 최근 실거래 중위가는 {eok(ref['median_price'])}({ref['count']}건)입니다.",
                          [body.add(drafting.trade_evidence(l, ref))])
+            if any(want.values()):
+                _structured_sentences(body, l, facts.setdefault(l["id"], structured.facts(conn, user.tenant_id, l)), want, routes)
+        if rent_budget:
+            body.check("전세·월세 금액은 매매 매물 가격 조건으로 쓰지 않았습니다. 보증금 비교는 위 전월세 사례로 확인")
         for w in f["wants"]:
             if listings and not any(m["want"] == w for l in shown for m in l["matched"]):
                 body.check(f"{josa(chr(39) + w + chr(39), '은는')} 자료에서 확인되지 않았습니다. 방문해서 확인")
@@ -536,10 +597,13 @@ def answer(conn, user, query: str, *, customer: dict | None = None, quote_id: st
 
     cond = {"budget_max": f["price_max"], "area_min": f["area_min"], "district": f["district"], "station_walk_max": f["walk_max"]}
     snapshot = [{**{k: v for k, v in l.items() if k != "score"}, "checks": drafting.condition_checks(l, cond),
-                 "trade_reference": refs[l["id"]], "matched": [{"want": m["want"], "text": m["text"]} for m in l["matched"]]}
+                 "trade_reference": refs[l["id"]], "matched": [{"want": m["want"], "text": m["text"]} for m in l["matched"]],
+                 "public": structured.public_summary(facts[l["id"]]) if l["id"] in facts else {}}
                 for l in listings]
     return {**body.result(), "listings": snapshot, "gate": {"status": gate["status"], "messages": gate["messages"]},
             "generator": generator, "title": "문의 답변", "query": q, "understood": chips(f), "relaxed": relaxed,
             "related": [ev_of(h) for h in hits[:6]], "listing_intent": listing_intent,
+            "routes": list(dict.fromkeys(routes)),
+            "stale_count": sum(1 for s in body.result()["sources"] if s.get("state") == "stale"),
             # 지도: 질문한 지역으로 옮기고 반경을 그린다 (구는 구청 근처, 반경 없음)
             "place": f["place"] or (places.gu_center(f["district"]) if f["district"] else None)}

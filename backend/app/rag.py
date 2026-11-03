@@ -1,6 +1,7 @@
 """문서 근거 경로(경로 B): 수집 → 청킹 → 임베딩 → 권한 필터 → 하이브리드 검색 → 재정렬 → 근거 게이트."""
 import hashlib
 from datetime import date
+from collections.abc import Iterable, Mapping
 from typing import Any
 
 from .chunking import chunk_document
@@ -11,6 +12,26 @@ from .embedding import EMBED_MODEL, embed
 AUTHORITY = {"law": 1, "policy": 2, "office": 3, "news": 4}
 TYPE_LABEL = {"law": "법령", "policy": "정책", "office": "사무소", "news": "기사", "data": "데이터"}
 POLICY_KEYWORDS = ("정책", "지원", "대출", "규제", "세금", "취득세", "법", "시행", "적용", "요건", "대상", "신고", "의무")
+
+
+def canonical_evidence(evidence: Mapping[str, Any]) -> dict[str, Any]:
+    """근거 객체를 API의 단일 계약(`id`, `type`)으로 정규화한다.
+
+    초기 LLM 코드가 사용하던 `chunk_id`, `source_type` 입력도 받아 기존
+    호출자와 저장된 스냅샷을 깨지 않지만, 반환값에는 canonical 필드를 쓴다.
+    """
+    item = dict(evidence)
+    evidence_id = item.get("id") or item.get("chunk_id")
+    source_type = item.get("type") or item.get("source_type")
+    if not evidence_id:
+        raise ValueError("근거 id가 없습니다.")
+    if not source_type:
+        raise ValueError("근거 type이 없습니다.")
+    item["id"] = str(evidence_id)
+    item["type"] = str(source_type)
+    item.pop("chunk_id", None)
+    item.pop("source_type", None)
+    return item
 
 
 # ---------- 수집 ----------
@@ -66,18 +87,28 @@ SELECT c.id, c.document_id, c.location, c.text, d.title, d.publisher, d.source_t
        word_similarity(%(qt)s, c.text) AS kscore
 FROM chunks c JOIN documents d ON d.id = c.document_id
 WHERE (c.tenant_id IS NULL OR c.tenant_id = %(tenant)s)          -- 검색 전에 tenant ACL 적용
+  AND (d.tenant_id IS NULL OR d.tenant_id = %(tenant)s)          -- 부모 문서 경계도 독립 검증
   AND (d.region IS NULL OR d.region = '전국' OR %(region)s::text IS NULL OR %(region)s::text LIKE d.region || '%%')
   AND d.published_at <= %(as_of)s
+  AND d.embed_model = %(embed_model)s
+  AND (%(source_types)s::text[] IS NULL OR d.source_type = ANY(%(source_types)s::text[]))
 ORDER BY 0.6 * (1 - (c.embedding <=> %(qv)s::vector)) + 0.4 * word_similarity(%(qt)s, c.text) DESC
 LIMIT 30
 """
 
 
 def search(conn, tenant_id: int, query: str, *, region: str | None = None, as_of: date | None = None,
-           k: int = 6) -> list[dict]:
+           source_types: Iterable[str] | None = None, k: int = 6) -> list[dict]:
+    allowed_types = None if source_types is None else list(dict.fromkeys(source_types))
+    invalid = set(allowed_types or ()) - set(AUTHORITY)
+    if invalid:
+        raise ValueError(f"지원하지 않는 문서 유형: {', '.join(sorted(invalid))}")
+    if allowed_types == []:
+        return []
     rows = conn.execute(_SEARCH_SQL, {
         "qv": vec_literal(embed(query)), "qt": query, "tenant": tenant_id,
-        "region": region, "as_of": as_of or date.today(),
+        "region": region, "as_of": as_of or date.today(), "embed_model": EMBED_MODEL,
+        "source_types": allowed_types,
     }).fetchall()
     hits = []
     for r in rows:
@@ -104,7 +135,7 @@ def search(conn, tenant_id: int, query: str, *, region: str | None = None, as_of
 def to_evidence(hit: dict) -> dict[str, Any]:
     """문서 조각 → 화면에 보여 줄 출처 하나 (docs/API.md evidence)."""
     st = hit["source_type"]
-    return {
+    return canonical_evidence({
         "id": f"c{hit['id']}",
         "kind": "chunk",
         "type": st,
@@ -120,7 +151,7 @@ def to_evidence(hit: dict) -> dict[str, Any]:
         "score": hit.get("score"),
         "state": "warning" if st == "news" else "ok",
         "note": "기사는 시장 상황을 설명하는 보조 자료입니다. 정책 적용 여부의 근거로 쓰지 않습니다." if st == "news" else None,
-    }
+    })
 
 
 # ---------- 근거 게이트 ----------

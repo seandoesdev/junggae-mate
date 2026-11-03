@@ -74,6 +74,7 @@ DATASETS: dict[str, DatasetSpec] = {
         name="국토교통부 TAGO 지하철정보",
         endpoint="https://apis.data.go.kr/1613000/SubwayInfo/GetKwrdFndSubwaySttnList",
         required_params=("subwayStationName",),
+        response_format="json",
         status="ready",
         note="역명 검색. 출구별 버스·편의시설·시간표는 별도 operation 어댑터 추가 필요",
     ),
