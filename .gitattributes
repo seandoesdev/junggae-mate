@@ -1,0 +1,3 @@
+# 리눅스 컨테이너에서 실행·마운트하는 파일은 줄바꿈을 LF로 고정한다 (CRLF면 셸 스크립트가 실행되지 않는다)
+*.sh            text eol=lf
+deploy/**       text eol=lf

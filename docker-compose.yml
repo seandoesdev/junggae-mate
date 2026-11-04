@@ -29,7 +29,7 @@ services:
       CORS_ORIGINS: ${CORS_ORIGINS:-}
       CORS_ORIGIN_REGEX: ${CORS_ORIGIN_REGEX:-}
       PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-}
-      # 앞단 프록시(caddy)가 보낸 X-Forwarded-Proto를 믿을 주소. https 프로필을 쓰면 .env에 FORWARDED_ALLOW_IPS=* 로
+      # 앞단 프록시(nginx)가 보낸 X-Forwarded-Proto를 믿을 주소. https 프로필을 쓰면 .env에 FORWARDED_ALLOW_IPS=* 로
       FORWARDED_ALLOW_IPS: ${FORWARDED_ALLOW_IPS:-127.0.0.1}
     ports:
       - "${APP_PORT:-8000}:8000"
@@ -40,27 +40,47 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
-  # 선택: API 서버 HTTPS (Let's Encrypt). docker compose --profile https up -d
-  caddy:
-    image: caddy:2
+  # ── 선택: API 서버 HTTPS — docker compose --profile https up -d ──
+  # nginx가 443으로 받아 app:8000으로 넘긴다. Let's Encrypt 인증서는 acme가 443의 TLS-ALPN-01로 받는다 (80 포트 불필요)
+
+  # Let's Encrypt 발급·자동 갱신 (acme.sh). 처음에는 임시 인증서를 두고, 발급되면 바꿔 넣는다
+  acme:
+    image: neilpang/acme.sh:3.1.6
     profiles: ["https"]
+    entrypoint: ["/bin/sh", "/deploy/entrypoint.sh"]
     environment:
       API_DOMAIN: ${API_DOMAIN:-}
       ACME_EMAIL: ${ACME_EMAIL:-}
-    # 443만 연다 (인증서 확인도 443의 TLS-ALPN-01). 443/udp는 HTTP/3용, 막혀 있으면 자동으로 TCP를 쓴다
+    volumes:
+      - ./deploy/acme/entrypoint.sh:/deploy/entrypoint.sh:ro
+      - acme_data:/acme.sh
+      - certs:/certs
+    healthcheck:
+      test: ["CMD-SHELL", "test -s /certs/fullchain.pem && test -s /certs/privkey.pem"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+    restart: unless-stopped
+
+  # 443 → app:8000 (Let's Encrypt 확인 요청만 acme로)
+  nginx:
+    image: nginx:1.27-alpine
+    profiles: ["https"]
     ports:
       - "443:443"
-      - "443:443/udp"
     volumes:
-      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
-      - caddy_data:/data
-      - caddy_config:/config
+      - ./deploy/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./deploy/nginx/90-reload-on-cert-change.sh:/docker-entrypoint.d/90-reload-on-cert-change.sh:ro
+      - certs:/certs:ro
     depends_on:
-      - app
+      app:
+        condition: service_started
+      acme:
+        condition: service_healthy
     restart: unless-stopped
 
 volumes:
   pgdata:
   rawdocs:
-  caddy_data:
-  caddy_config:
+  acme_data:
+  certs:
