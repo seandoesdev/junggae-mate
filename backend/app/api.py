@@ -1,8 +1,10 @@
 """REST API (docs/API.md v0.3). tenant는 토큰의 사용자 레코드에서만 정해진다."""
+import re
 from datetime import date
 from pathlib import Path
 from typing import Literal
 
+import psycopg
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field, field_validator
@@ -11,7 +13,7 @@ from . import assistant, drafting, hood, llm, structured, public_catalog, public
 from .audit import record
 from .config import settings
 from .db import fetch_one, pool, tx
-from .security import CurrentUser, create_token, current_user, require_admin, verify_password
+from .security import CurrentUser, create_token, current_user, hash_password, require_admin, verify_password
 
 router = APIRouter(prefix="/api")
 public = APIRouter()
@@ -22,6 +24,33 @@ public = APIRouter()
 class LoginIn(BaseModel):
     email: str
     password: str
+
+
+_EMAIL = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+
+
+class SignupIn(BaseModel):
+    """회원가입 = 새 사무소 만들기. 가입한 사람이 그 사무소의 관리자가 된다"""
+    office_name: str = Field(min_length=2, max_length=60)
+    name: str = Field(min_length=1, max_length=40)
+    email: str = Field(max_length=254)
+    password: str = Field(min_length=8, max_length=128)
+
+    @field_validator("office_name", "name")
+    @classmethod
+    def _strip(cls, v: str) -> str:
+        v = v.strip()
+        if not v:
+            raise ValueError("비워 둘 수 없습니다.")
+        return v
+
+    @field_validator("email")
+    @classmethod
+    def _email(cls, v: str) -> str:
+        v = v.strip().lower()
+        if not _EMAIL.match(v):
+            raise ValueError("이메일 형식이 올바르지 않습니다.")
+        return v
 
 
 class _Clean(BaseModel):
@@ -262,6 +291,29 @@ def login(body: LoginIn):
     user = CurrentUser(**row)
     with tx() as conn:
         record(conn, tenant_id=user.tenant_id, user_id=user.id, event="auth.login", entity="user", entity_id=user.id)
+    return {"access_token": create_token(user.id), "token_type": "bearer", "user": user.public()}
+
+
+@router.post("/auth/signup", status_code=201)
+def signup(body: SignupIn):
+    """새 사무소와 그 관리자 계정을 만들고 바로 로그인 상태로 돌려준다. 다른 사무소의 자료는 보이지 않는다"""
+    if not settings.signup_enabled:
+        raise HTTPException(403, "지금은 회원가입을 받지 않습니다. 관리자에게 계정을 요청하세요.")
+    try:
+        with tx() as conn:
+            if conn.execute("SELECT 1 FROM users WHERE email = %s", (body.email,)).fetchone():
+                raise HTTPException(409, "이미 가입된 이메일입니다. 로그인해 주세요.")
+            tenant = conn.execute("INSERT INTO tenants (name) VALUES (%s) RETURNING id, name",
+                                  (body.office_name,)).fetchone()
+            row = conn.execute(
+                """INSERT INTO users (tenant_id, email, name, role, password_hash)
+                   VALUES (%s, %s, %s, 'admin', %s) RETURNING id, tenant_id, name, email, role""",
+                (tenant["id"], body.email, body.name, hash_password(body.password)),
+            ).fetchone()
+            user = CurrentUser(**row, tenant_name=tenant["name"])
+            record(conn, tenant_id=user.tenant_id, user_id=user.id, event="auth.signup", entity="user", entity_id=user.id)
+    except psycopg.errors.UniqueViolation:  # 같은 이메일이 동시에 가입한 경우
+        raise HTTPException(409, "이미 가입된 이메일입니다. 로그인해 주세요.") from None
     return {"access_token": create_token(user.id), "token_type": "bearer", "user": user.public()}
 
 

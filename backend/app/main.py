@@ -99,6 +99,12 @@ def root():
     return RedirectResponse("/app.html")
 
 
+@app.get("/config.json", include_in_schema=False)
+def frontend_config():
+    """화면이 시작할 때 읽는 API 주소. 여기서 화면을 내려주면 같은 주소(/api)를 쓴다 (Cloudflare에서는 Pages Function이 답한다)"""
+    return JSONResponse({"apiUrl": ""}, headers={"Cache-Control": "no-store"})
+
+
 @app.get("/favicon.ico", include_in_schema=False)
 def favicon():
     return Response(status_code=204)

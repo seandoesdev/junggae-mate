@@ -50,6 +50,29 @@ def test_cors_headers_on_error_responses(client):
     assert r.headers["access-control-allow-origin"] == "https://app.example.test"
 
 
+def test_signup_creates_isolated_office_admin(client):
+    """회원가입 = 새 사무소 + 그 관리자. 바로 로그인 상태가 되고, 다른 사무소의 자료는 보이지 않는다"""
+    r = client.post("/api/auth/signup", json={
+        "office_name": " 새봄공인중개사사무소 ", "name": "최새봄", "email": " Spring@New.test ", "password": "spring-1234"})
+    assert r.status_code == 201, r.text
+    body = r.json()
+    u = body["user"]
+    assert (u["role"], u["email"], u["tenant_name"], u["name"]) == ("admin", "spring@new.test", "새봄공인중개사사무소", "최새봄")
+    h = {"Authorization": f"Bearer {body['access_token']}"}
+    assert client.get("/api/me", headers=h).json()["tenant_name"] == "새봄공인중개사사무소"
+    assert client.get("/api/customers", headers=h).json() == []      # 시드 사무소의 고객이 보이지 않는다
+    assert client.post("/api/auth/login", json={"email": "spring@new.test", "password": "spring-1234"}).status_code == 200
+
+    # 같은 이메일(대소문자 무관)은 다시 가입할 수 없다
+    dup = client.post("/api/auth/signup", json={
+        "office_name": "다른사무소", "name": "누구", "email": "SPRING@new.test", "password": "another-1234"})
+    assert dup.status_code == 409
+    # 비밀번호 8자 미만, 이메일 형식 오류, 빈 사무소 이름은 받지 않는다
+    for bad in ({"password": "short"}, {"email": "not-an-email"}, {"office_name": "  "}):
+        payload = {"office_name": "검증사무소", "name": "검증", "email": "check@new.test", "password": "check-1234", **bad}
+        assert client.post("/api/auth/signup", json=payload).status_code == 422, bad
+
+
 def _login(client, email):
     r = client.post("/api/auth/login", json={"email": email, "password": "demo1234"})
     assert r.status_code == 200, r.text
