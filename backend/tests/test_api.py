@@ -17,6 +17,39 @@ def client():
         yield c
 
 
+def test_cors_allows_configured_frontend_origins_only(client):
+    """화면을 Cloudflare 등 다른 주소에서 내려줄 때: 허용한 화면만 API를 부를 수 있다 (Bearer 헤더, 쿠키 없음)"""
+    origin = "https://app.example.test"
+    pre = client.options("/api/listings", headers={
+        "Origin": origin, "Access-Control-Request-Method": "POST",
+        "Access-Control-Request-Headers": "authorization, content-type"})
+    assert pre.status_code == 200, pre.text
+    assert pre.headers["access-control-allow-origin"] == origin
+    assert {"authorization", "content-type"} <= {h.strip().lower() for h in pre.headers["access-control-allow-headers"].split(",")}
+    assert "access-control-allow-credentials" not in pre.headers
+
+    got = client.get("/api/health", headers={"Origin": origin})
+    assert got.headers["access-control-allow-origin"] == origin
+    assert "x-request-id" in got.headers["access-control-expose-headers"].lower()
+    # 끝의 /를 붙여 적어도 같은 주소로 본다
+    assert client.get("/api/health", headers={"Origin": "https://admin.example.test"}).headers[
+        "access-control-allow-origin"] == "https://admin.example.test"
+    # 미리보기 배포 주소는 정규식으로 허용
+    preview = "https://feature-x.preview.example.test"
+    assert client.get("/api/health", headers={"Origin": preview}).headers["access-control-allow-origin"] == preview
+    # 그 밖의 주소에는 허용 헤더를 주지 않는다
+    assert "access-control-allow-origin" not in client.get("/api/health", headers={"Origin": "https://evil.example"}).headers
+    bad = client.options("/api/listings", headers={"Origin": "https://evil.example", "Access-Control-Request-Method": "GET"})
+    assert bad.status_code == 400
+
+
+def test_cors_headers_on_error_responses(client):
+    """401 같은 오류 응답에도 CORS 헤더가 붙어야 화면이 '다시 로그인' 같은 실제 오류를 읽을 수 있다"""
+    r = client.get("/api/me", headers={"Origin": "https://app.example.test"})
+    assert r.status_code == 401
+    assert r.headers["access-control-allow-origin"] == "https://app.example.test"
+
+
 def _login(client, email):
     r = client.post("/api/auth/login", json={"email": email, "password": "demo1234"})
     assert r.status_code == 200, r.text

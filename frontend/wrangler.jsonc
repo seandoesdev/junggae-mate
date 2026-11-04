@@ -1,0 +1,10 @@
+// Cloudflare Pages 설정 — 화면(dist/)과 Pages Function(functions/config.json.ts). 배포: npm run deploy
+// API 서버 주소는 Pages 환경 변수 API_URL (대시보드 > Workers & Pages > junggae-mate > Settings > Variables and Secrets,
+// 또는 `npx wrangler pages secret put API_URL --project-name junggae-mate`).
+// 사용자 도메인(junggae-mate.kro.kr)은 외부 DNS에서 CNAME → junggae-mate.pages.dev 로 연결한다.
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "junggae-mate",
+  "pages_build_output_dir": "./dist",
+  "compatibility_date": "2026-10-01"
+}
