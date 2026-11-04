@@ -7,3 +7,8 @@ __pycache__/
 .playwright-mcp/
 node_modules/
 .taste-skill/
+
+# 비밀값 파일 (커밋 금지)
+cloudflare-api-token.txt
+*-token.txt
+*.token

@@ -1,4 +1,7 @@
-"""작업대(app.html) E2E 테스트. 실행: docker compose down -v && docker compose up -d --build 후 python e2e_app.py
+"""작업대(app.html, frontend/ React 빌드) E2E 테스트.
+실행 (운영 DB를 건드리지 않는 별도 프로젝트에서):
+  docker compose -p junggae-mate-e2e down -v && APP_PORT=18000 docker compose -p junggae-mate-e2e up -d --build
+  APP_URL=http://localhost:18000 python e2e_app.py
 
 시드 데이터 기준으로 동작하므로 깨끗한 DB에서 실행한다 (단계 변경·등록을 실제로 저장한다).
 """
@@ -18,7 +21,9 @@ def run():
         browser = p.chromium.launch(headless=True, executable_path=CHROME if Path(CHROME).exists() else None)
         page = browser.new_page(viewport={"width": 1440, "height": 900})
         page.on("pageerror", lambda exc: errors.append(str(exc)))
-        page.on("console", lambda m: errors.append(m.text) if m.type == "error" and "401" not in m.text else None)
+        page.on("console", lambda m: errors.append(f"{m.text} @ {m.location.get('url', '')}") if m.type == "error" and "401" not in m.text else None)
+        # 콘솔 오류에는 주소가 없으므로, 실패한 응답은 주소와 함께 남긴다
+        page.on("response", lambda r: errors.append(f"HTTP {r.status} {r.url}") if r.status >= 400 and r.status != 401 else None)
         page.goto(f"{BASE}/app.html")
 
         page.fill("#login-email", "agent@hanul.test")
@@ -169,6 +174,7 @@ def run():
         # 보고서·사용량·설정
         page.evaluate("location.hash = '#/ai/usage'")
         expect(page.locator(".kpis")).to_contain_text("이번 달 질문", timeout=10000)
+        page.wait_for_timeout(1600)                                         # 차트 그려지는 움직임(약 1.1초)이 끝난 뒤
         page.screenshot(path=str(IMAGES / "app-hood-usage.png"))
         page.evaluate("location.hash = '#/ai/settings'")
         expect(page.locator(".notice")).to_contain_text("관리자만", timeout=10000)
@@ -207,6 +213,7 @@ def run():
         # ── 거래 ──
         page.click("[data-nav=deals]")
         expect(page.locator(".col")).to_have_count(5)
+        page.wait_for_timeout(1000)                                         # 단계 깔때기·진행선이 다 그려진 뒤
         page.screenshot(path=str(IMAGES / "app-deals.png"))
 
         # ── 자료실 ──
@@ -298,7 +305,7 @@ def run():
         src.click()
         drawer = page.locator("#drawer")
         expect(drawer).to_have_attribute("role", "dialog")
-        expect(drawer).to_have_attribute("aria-modal", "")
+        expect(drawer).to_have_attribute("aria-modal", "true")
         assert page.evaluate("document.body.classList.contains('sheet-open')")
         for _ in range(8):
             page.keyboard.press("Tab")
@@ -307,6 +314,7 @@ def run():
         page.screenshot(path=str(IMAGES / "app-source-mobile.png"))
         page.mouse.click(195, 80)                                           # 어둡게 덮인 바깥을 누르면 닫힌다
         expect(drawer).to_be_hidden()
+        page.wait_for_timeout(700)                                          # 바깥 누름을 삼키는 시간(600ms)이 지난 뒤
         src.click()
         expect(drawer).to_be_visible()
         page.keyboard.press("Escape")

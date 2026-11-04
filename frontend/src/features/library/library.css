@@ -1,0 +1,3 @@
+/* 자료실 덧붙임 (legacy.css의 .search, .hit, .typeword를 그대로 쓴다) */
+#library-side .lib-h-acts { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+.lib-dlg-note { font-size: 12px; margin: 0 0 8px; }

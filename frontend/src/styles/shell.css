@@ -1,0 +1,26 @@
+/* React 껍데기에 필요한 덧붙임. 화면별 덧붙임은 features/<화면>/<화면>.css 에 둔다 (legacy.css는 고치지 않는다). */
+
+#root { height: 100%; }
+
+/* 화면 전환용 감싸개: 레이아웃에 끼어들지 않는다 (#app의 격자 칸은 안쪽 .view가 차지) */
+.view-host { display: contents; }
+
+/* 활성 메뉴 밑줄: 메뉴 사이를 미끄러지는 막대 (예전의 border-bottom 대신) */
+.nav a { position: relative; }
+.nav a.is-active { border-bottom-color: transparent; }
+.nav-ind {
+  position: absolute; left: 0; right: 0; bottom: -1px; height: 2px;
+  background: var(--teal); border-radius: 2px; pointer-events: none;
+}
+
+/* Motion이 transform을 다루므로 가운데 정렬은 left/right로 */
+.toast { left: 0; right: 0; margin-inline: auto; width: max-content; }
+
+/* 휴대폰 출처 시트: 머리글을 잡고 끌어내릴 수 있다는 표시 */
+@media (max-width: 900px) {
+  .drawer .drawer-h { touch-action: none; cursor: grab; }
+  .drawer .drawer-h::before {
+    content: ""; position: absolute; top: 6px; left: 50%; width: 36px; height: 4px; margin-left: -18px;
+    border-radius: 2px; background: var(--control);
+  }
+}

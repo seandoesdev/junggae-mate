@@ -95,15 +95,38 @@ python scripts/smoke_public_data_live.py
 docker compose up -d db
 docker compose run --rm app python -m pytest -q     # API 통합 테스트 (테스트 전용 DB mate_test를 매번 새로 만듦)
 
-docker compose down -v && docker compose up -d --build   # 깨끗한 시드 데이터로 다시 시작
-python e2e_app.py                                    # 작업 화면 E2E (로컬 Chrome + Playwright)
+# 작업 화면 E2E는 운영 DB를 건드리지 않도록 별도 프로젝트(포트 18000)에서 깨끗한 시드로 돌린다
+docker compose -p junggae-mate-e2e down -v && APP_PORT=18000 docker compose -p junggae-mate-e2e up -d --build
+APP_URL=http://localhost:18000 python e2e_app.py     # 로컬 Chrome + Playwright
 python test_workflow.py                              # 초기 워크플로우 시안(index.html) 테스트
+
+cd frontend && npm ci && npm run typecheck && npm run build   # 화면 타입 검사·빌드 (Docker 이미지는 이 빌드를 자동으로 포함)
 ```
+
+화면 개발은 `cd frontend && npm run dev` → http://localhost:5173/app.html (`/api`는 8000으로 넘김). 자세한 규칙은 [frontend/README.md](frontend/README.md).
+
+## 배포 (화면 Cloudflare Pages + API 서버 직접 운영)
+
+- **화면**: Cloudflare Pages `junggae-mate` → https://junggae-mate.kro.kr (CNAME → `junggae-mate.pages.dev`). 인증서는 Cloudflare가 자동 발급·갱신. 자세한 내용은 [frontend/README.md](frontend/README.md)
+- **API 서버**: `docker compose --profile https up -d` — Caddy가 Let's Encrypt 인증서를 자동 발급·갱신하고 `app:8000`으로 넘긴다 ([deploy/Caddyfile](deploy/Caddyfile))
+
+API 서버 `.env` (예시는 [.env.example](.env.example)):
+
+```bash
+API_DOMAIN=api-junggae-mate.kro.kr            # A 레코드 → 서버 공인 IP, 443 포트만 개방 (인증서 확인도 443의 TLS-ALPN-01)
+ACME_EMAIL=<인증서 안내 받을 이메일>
+APP_PORT=127.0.0.1:8000            # 8000은 밖으로 열지 않고 Caddy만 공개
+FORWARDED_ALLOW_IPS=*              # Caddy가 알려 준 https를 앱이 믿도록
+PUBLIC_BASE_URL=https://api-junggae-mate.kro.kr
+CORS_ORIGINS=https://junggae-mate.kro.kr,https://junggae-mate.pages.dev
+```
+
+그다음 화면에 API 주소를 알려 준다: `cd frontend && npx wrangler pages secret put API_URL --project-name junggae-mate` → `https://api-junggae-mate.kro.kr` 입력 후 `npm run deploy`.
 
 ## 구조
 
 ```
-docker-compose.yml        db(pgvector/pg16) + app(FastAPI, 정적 화면 포함)
+docker-compose.yml        db(pgvector/pg16) + app(FastAPI, 빌드한 화면 포함)
 backend/
   sql/schema.sql          고객·거래·매물·고객 자료·문서 테이블 (기동 시 멱등 실행)
   app/main.py             앱, request ID 미들웨어, 정적 파일 화이트리스트
@@ -123,7 +146,12 @@ backend/
   app/public_sources.py   전월세·K-apt·건축물대장·지하철 정규화·멱등 저장·캐시 조회
   app/seed.py             예시 데이터
   tests/                  API 통합 테스트
-app.html / app.css / app-*.js   작업 화면 (core 공통, map 지도·공공데이터 섹션, public 관리자 수집, ask 지도 질문 결과, hood Hood Chat·Ask Hood 패널, people 거래·고객, docs 자료실·고객 자료)
+frontend/                 작업 화면 (React 19 + TypeScript + Vite + Tailwind v4, Bklit 차트, Motion·anime.js 움직임)
+  src/App.tsx             로그인 / 상단바 + 주소(#/…)별 화면 + Ask Hood 패널
+  src/lib, state, components   API·주소·표기·움직임 규칙, 로그인·알림·대화상자·출처 패널, 공통 부품
+  src/features/           map 지도·매물 상세·공공데이터·지도 질문 결과, hood Hood Chat·Ask Hood·사용량 차트,
+                          deals 거래 보드·단계 깔때기, customers 고객, library 자료실, report 고객 자료, public 관리자 수집
+  src/components/charts/  Bklit 차트 원본 (shadcn 레지스트리)
 index.html / script.js / styles.css   초기 워크플로우 시안 (정적)
 docs/                     API 계약, 재설계안, 클릭 시안, 화면 이미지
 e2e_app.py / test_workflow.py   브라우저 테스트

@@ -1,0 +1,41 @@
+/* Hood AI 화면·Ask Hood 패널 덧붙임 (legacy.css의 hood-*, ai-*, turn, composer, kpis, barlist 를 그대로 쓰고 모자란 것만) */
+
+/* 왼쪽 메뉴: 활성 배경이 메뉴 사이를 미끄러진다 (Motion layoutId) */
+.ai-nav a { position: relative; }
+.ai-nav a.is-active { background: transparent; }
+.ai-nav a > span { position: relative; }
+.ai-nav-ind { position: absolute; inset: 0; border-radius: 8px; background: var(--active); }
+.ai-history li { overflow: hidden; }
+
+/* Ask Hood 패널: 위치(transform)는 Motion이 맡는다 */
+.hood-panel { will-change: transform; }
+.hood-panel .hood-body { overscroll-behavior: contain; }
+
+/* 답을 기다리는 칸: 질문 이해 → 근거 찾기 → 답변 정리 */
+.hood-steps { margin: 6px 0 0; max-width: 420px; }
+.hood-steps ol { list-style: none; margin: 0; padding: 0; display: flex; gap: 14px; flex-wrap: wrap; font-size: 13px; color: var(--faint); }
+.hood-steps li { display: inline-flex; align-items: center; gap: 6px; transition: color .15s; }
+.hood-steps li i { width: 6px; height: 6px; border-radius: 50%; background: var(--control); transition: background .15s; }
+.hood-steps li.is-on { color: var(--text); font-weight: 500; }
+.hood-steps li.is-on i { background: var(--teal); box-shadow: 0 0 0 3px rgba(27, 108, 128, .16); }
+.hood-steps li.is-done { color: var(--muted-ink); }
+.hood-steps li.is-done i { background: var(--teal); }
+.hood-steps-track { display: block; height: 2px; margin-top: 8px; border-radius: 1px; background: var(--active); overflow: hidden; }
+.hood-steps-track span { display: block; height: 100%; background: var(--teal); transform-origin: left center; transform: scaleX(.12); }
+.turn .hood-steps-note { padding: 8px 0 0; font-size: 12px; }
+
+/* 사용량 차트 */
+.hood-chart { margin: 4px 0 0; }
+.hood-chart-empty { margin: 8px 0 12px; }
+.hood-ring { display: grid; place-items: center; padding: 4px 0; }
+.hood-route { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); gap: 28px; align-items: start; }
+.hood-route-bars { min-width: 0; }
+.hood-latency { min-width: 0; border-left: 1px solid var(--rule); padding-left: 24px; }
+.hood-latency h3 { font-size: 13px; font-weight: 500; color: var(--muted-ink); margin: 0 0 8px; }
+.hood-latency p { margin: 10px 0 0; font-size: 12px; line-height: 18px; }
+.hood-latency .hood-latency-v { margin: 0 0 8px; font-size: 24px; line-height: 32px; font-weight: 500; color: var(--text); }
+.hood-latency-v small { font-size: 13px; color: var(--muted-ink); margin-left: 2px; font-weight: 400; }
+@media (max-width: 900px) {
+  .hood-route { grid-template-columns: minmax(0, 1fr); gap: 16px; }
+  .hood-latency { border-left: 0; padding-left: 0; border-top: 1px solid var(--rule); padding-top: 14px; }
+}

@@ -1,0 +1,12 @@
+/* 고객 자료 덧붙임 (legacy.css의 .paper, .stamp, .foot, .rside, .flow, .share를 그대로 쓴다) */
+.rside .rp-h { font-size: 13.5px; }
+.rside .rp-h--hist { margin-top: 6px; }
+.rp-share-note { font-size: 12px; }
+.paper .stamp { transform-origin: top right; }
+
+@media print {
+  /* 처음 열 때의 등장 움직임 도중에 인쇄해도 문서가 온전히 보이게 */
+  .paper > *, .paper .foot li { opacity: 1 !important; transform: none !important; }
+  /* 여백 없는 인쇄면에서는 '고객 전달 전' 표시가 발신인과 겹치지 않게 머리글 위로 */
+  .paper .stamp { position: static; display: inline-block; margin-bottom: 8px; }
+}
