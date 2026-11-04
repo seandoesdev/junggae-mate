@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field, field_validator
 
 from . import assistant, drafting, hood, llm, structured, public_catalog, public_data, public_sources, rag, workflow
 from .audit import record
+from .config import settings
 from .db import fetch_one, pool, tx
 from .security import CurrentUser, create_token, current_user, require_admin, verify_password
 
@@ -240,7 +241,8 @@ def _deal(conn, user: CurrentUser, deal_id: int) -> dict:
 
 
 def _report(conn, user: CurrentUser, report_id: int, request: Request) -> dict:
-    r = workflow.load_report(conn, user.tenant_id, report_id, base_url=str(request.base_url).rstrip("/"))
+    r = workflow.load_report(conn, user.tenant_id, report_id,
+                             base_url=settings.public_base_url or str(request.base_url).rstrip("/"))
     if not r:
         raise HTTPException(404, "고객 자료를 찾을 수 없습니다.")
     return r

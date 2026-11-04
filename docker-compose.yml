@@ -25,6 +25,12 @@ services:
         required: false
     environment:
       DATABASE_URL: postgresql://mate:${POSTGRES_PASSWORD:-mate}@db:5432/mate
+      # 화면을 Cloudflare 등 다른 주소에서 내려줄 때 (.env 또는 셸 환경변수로 지정)
+      CORS_ORIGINS: ${CORS_ORIGINS:-}
+      CORS_ORIGIN_REGEX: ${CORS_ORIGIN_REGEX:-}
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-}
+      # 앞단 프록시(caddy)가 보낸 X-Forwarded-Proto를 믿을 주소. https 프로필을 쓰면 .env에 FORWARDED_ALLOW_IPS=* 로
+      FORWARDED_ALLOW_IPS: ${FORWARDED_ALLOW_IPS:-127.0.0.1}
     ports:
       - "${APP_PORT:-8000}:8000"
     volumes:
@@ -34,6 +40,27 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
+  # 선택: API 서버 HTTPS (Let's Encrypt). docker compose --profile https up -d
+  caddy:
+    image: caddy:2
+    profiles: ["https"]
+    environment:
+      API_DOMAIN: ${API_DOMAIN:-}
+      ACME_EMAIL: ${ACME_EMAIL:-}
+    # 443만 연다 (인증서 확인도 443의 TLS-ALPN-01). 443/udp는 HTTP/3용, 막혀 있으면 자동으로 TCP를 쓴다
+    ports:
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - app
+    restart: unless-stopped
+
 volumes:
   pgdata:
   rawdocs:
+  caddy_data:
+  caddy_config:

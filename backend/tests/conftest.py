@@ -12,3 +12,6 @@ with psycopg.connect(_base, autocommit=True) as conn:
     conn.execute("DROP DATABASE IF EXISTS mate_test WITH (FORCE)")
     conn.execute("CREATE DATABASE mate_test")
 os.environ["DATABASE_URL"] = _test
+# CORS: 화면을 다른 주소(Cloudflare 등)에서 내려주는 배포를 흉내 낸다 (test_api.py의 CORS 테스트)
+os.environ["CORS_ORIGINS"] = "https://app.example.test, https://admin.example.test/"
+os.environ["CORS_ORIGIN_REGEX"] = r"^https://[a-z0-9-]+\.preview\.example\.test$"
