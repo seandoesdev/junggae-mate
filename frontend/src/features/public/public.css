@@ -1,0 +1,6 @@
+/* 공공데이터 운영 덧붙임: 작업 기록 위의 작은 결과 막대 */
+.job-chart { margin: 0 0 14px; max-width: 560px; }
+.job-chart figcaption { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; font-size: 12px; color: var(--muted-ink); margin-bottom: 2px; }
+.job-chart figcaption > span:first-child { font-weight: 600; color: var(--text); margin-right: 4px; }
+.job-chart-key { display: inline-flex; align-items: center; gap: 5px; }
+.job-chart-key i { width: 8px; height: 8px; border-radius: 2px; display: inline-block; }

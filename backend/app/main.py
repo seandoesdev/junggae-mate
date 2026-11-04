@@ -6,6 +6,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Response
+from fastapi.staticfiles import StaticFiles
 
 from . import db
 from .api import public, router
@@ -39,8 +40,6 @@ async def lifespan(_: FastAPI):
 
 
 app = FastAPI(title="중개메이트 API", version="0.1.0", lifespan=lifespan)
-if settings.cors_origins:
-    app.add_middleware(CORSMiddleware, allow_origins=settings.cors_origins, allow_methods=["*"], allow_headers=["*"])
 
 
 @app.middleware("http")
@@ -62,6 +61,21 @@ async def request_id(request: Request, call_next):
     return response
 
 
+# CORS: 화면(Cloudflare 등)과 API 서버의 주소가 다를 때. 로그인은 Authorization 헤더(Bearer)라 쿠키를 보내지 않는다.
+# 맨 바깥 미들웨어로 둔다(나중에 더한 것이 바깥): 500 오류 응답에도 CORS 헤더가 붙어 브라우저가 실제 오류를 볼 수 있다.
+if settings.cors_origins or settings.cors_origin_regex:
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=settings.cors_origins,
+        allow_origin_regex=settings.cors_origin_regex,
+        allow_credentials=False,
+        allow_methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
+        allow_headers=["Authorization", "Content-Type", "X-Request-ID"],
+        expose_headers=["X-Request-ID"],
+        max_age=600,
+    )
+
+
 @app.exception_handler(HTTPException)
 async def http_error(request: Request, exc: HTTPException):
     code = {400: "bad_request", 401: "unauthorized", 403: "forbidden", 404: "not_found", 409: "conflict",
@@ -71,6 +85,10 @@ async def http_error(request: Request, exc: HTTPException):
 
 app.include_router(router)
 app.include_router(public)  # 고객용 공개 링크 /r/{token}
+
+# React 화면(frontend/)의 빌드 결과: app.html은 아래 static_file이, 묶음 파일은 /assets/* 가 내려준다.
+# 이미지 안의 static/assets 폴더만 열어 두므로 저장소의 다른 파일은 보이지 않는다.
+app.mount("/assets", StaticFiles(directory=settings.static_dir / "assets", check_dir=False), name="assets")
 
 # 정적 화면: 허용된 파일만 제공 (저장소의 다른 파일 노출 방지)
 _STATIC_SUFFIXES = {".html", ".css", ".js", ".png", ".svg", ".ico"}

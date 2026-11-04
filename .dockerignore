@@ -5,3 +5,11 @@
 .git
 .omc
 docs
+frontend/node_modules
+frontend/dist
+.archify
+frontend/.wrangler
+frontend/.dev.vars
+cloudflare-api-token.txt
+*-token.txt
+*.token

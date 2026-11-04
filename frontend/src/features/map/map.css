@@ -1,0 +1,9 @@
+/* 지도 화면 덧붙임 (legacy.css는 고치지 않는다) */
+
+/* .pin-drop: 핀이 처음 나타날 때 움직임을 받는 감싸개 (leaflet.ts). .pin 자체의 위치용 transform은 건드리지 않는다 */
+
+/* 공공데이터 전월세: 최근 전세 보증금 작은 선 그래프 */
+.rent-spark { margin-top: 6px; min-width: 0; max-width: 320px; }
+.rent-spark-h { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 0 8px; font-size: 12px; color: var(--faint); margin-bottom: 4px; }
+.rent-spark-h b { color: var(--text); font-weight: 600; }
+.rent-spark-h > span { white-space: nowrap; }

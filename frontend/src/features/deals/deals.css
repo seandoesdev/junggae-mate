@@ -1,0 +1,15 @@
+/* 거래 보드 덧붙임 (legacy.css의 .board/.col/.dcard는 그대로 쓴다) */
+
+/* 단계 깔때기: 보드 위의 낮은 띠 */
+.deal-funnel { margin: -4px 0 16px; max-width: 980px; }
+.deal-funnel-h { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; margin-bottom: 4px; }
+.deal-funnel-h h2 { font-size: 14px; font-weight: 600; }
+.deal-funnel-h .muted { font-size: 12px; }
+.deal-funnel-chart { height: 112px; }
+
+/* 칸 머리: 단계 이름표 + 작은 진행선 */
+.col-title { display: inline-flex; align-items: center; gap: 8px; }
+.col-line { display: block; flex: none; }
+
+/* 카드가 칸을 옮겨 갈 때 다른 칸 위로 지나가게 */
+.board .dcard { position: relative; }
