@@ -51,6 +51,9 @@ services:
     environment:
       API_DOMAIN: ${API_DOMAIN:-}
       ACME_EMAIL: ${ACME_EMAIL:-}
+      # 시험할 때만: ACME_SERVER=letsencrypt_test(스테이징), ACME_ARGS="--debug 2"
+      ACME_SERVER: ${ACME_SERVER:-}
+      ACME_ARGS: ${ACME_ARGS:-}
     volumes:
       - ./deploy/acme/entrypoint.sh:/deploy/entrypoint.sh:ro
       - acme_data:/acme.sh
