@@ -40,10 +40,10 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
-  # ── 선택: API 서버 HTTPS — docker compose --profile https up -d ──
-  # nginx가 443으로 받아 app:8000으로 넘긴다. Let's Encrypt 인증서는 acme가 443의 TLS-ALPN-01로 받는다 (80 포트 불필요)
+  # ── 선택: API 서버 HTTPS — docker compose --profile https up -d (또는 .env에 COMPOSE_PROFILES=https) ──
+  # nginx가 443으로 받아 app:8000으로 넘긴다. 인증서는 acme가 ZeroSSL에서 받는다 (확인은 80 포트의 HTTP-01)
 
-  # Let's Encrypt 발급·자동 갱신 (acme.sh). 처음에는 임시 인증서를 두고, 발급되면 바꿔 넣는다
+  # 인증서 발급·자동 갱신 (acme.sh, 기본 ZeroSSL). 처음에는 임시 인증서를 두고, 발급되면 바꿔 넣는다
   acme:
     image: neilpang/acme.sh:3.1.6
     profiles: ["https"]
@@ -51,9 +51,16 @@ services:
     environment:
       API_DOMAIN: ${API_DOMAIN:-}
       ACME_EMAIL: ${ACME_EMAIL:-}
+      ACME_SERVER: ${ACME_SERVER:-zerossl}
+      ACME_CHALLENGE: ${ACME_CHALLENGE:-http}
+      ZEROSSL_EAB_KID: ${ZEROSSL_EAB_KID:-}
+      ZEROSSL_EAB_HMAC_KEY: ${ZEROSSL_EAB_HMAC_KEY:-}
+      # 시험할 때만: ACME_ARGS="--debug 2"
+      ACME_ARGS: ${ACME_ARGS:-}
     volumes:
       - ./deploy/acme/entrypoint.sh:/deploy/entrypoint.sh:ro
       - acme_data:/acme.sh
+      - acme_webroot:/acme-webroot
       - certs:/certs
     healthcheck:
       test: ["CMD-SHELL", "test -s /certs/fullchain.pem && test -s /certs/privkey.pem"]
@@ -62,15 +69,17 @@ services:
       retries: 30
     restart: unless-stopped
 
-  # 443 → app:8000 (Let's Encrypt 확인 요청만 acme로)
+  # 443 → app:8000, 80 → 인증서 확인 파일만 (나머지는 https로)
   nginx:
     image: nginx:1.27-alpine
     profiles: ["https"]
     ports:
+      - "80:80"
       - "443:443"
     volumes:
       - ./deploy/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
       - ./deploy/nginx/90-reload-on-cert-change.sh:/docker-entrypoint.d/90-reload-on-cert-change.sh:ro
+      - acme_webroot:/acme-webroot:ro
       - certs:/certs:ro
     depends_on:
       app:
@@ -83,4 +92,5 @@ volumes:
   pgdata:
   rawdocs:
   acme_data:
+  acme_webroot:
   certs:
