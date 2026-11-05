@@ -10,8 +10,12 @@ type Session = {
   /** 저장된 토큰으로 사용자를 불러오는 중 */
   booting: boolean;
   login: (email: string, password: string) => Promise<void>;
+  /** 회원가입 = 새 사무소 만들기. 성공하면 바로 로그인 상태 */
+  signup: (input: SignupInput) => Promise<void>;
   logout: () => void;
 };
+
+export type SignupInput = { office_name: string; name: string; email: string; password: string };
 
 const Ctx = createContext<Session | null>(null);
 
@@ -43,7 +47,13 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     setUser(r.user);
   }, []);
 
-  const value = useMemo(() => ({ user, booting, login, logout }), [user, booting, login, logout]);
+  const signup = useCallback(async (input: SignupInput) => {
+    const r = await api<{ access_token: string; user: User }>("POST", "/auth/signup", input);
+    setToken(r.access_token);
+    setUser(r.user);
+  }, []);
+
+  const value = useMemo(() => ({ user, booting, login, signup, logout }), [user, booting, login, signup, logout]);
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }
 

@@ -13,6 +13,13 @@
   background: var(--teal); border-radius: 2px; pointer-events: none;
 }
 
+/* 글 속 링크처럼 보이는 버튼 (로그인 ↔ 회원가입 전환) */
+.linkbtn {
+  padding: 0; border: 0; background: none; font: inherit; color: var(--teal);
+  font-weight: 600; cursor: pointer; text-decoration: underline; text-underline-offset: 2px;
+}
+.linkbtn:hover { color: var(--teal-ink); }
+
 /* Motion이 transform을 다루므로 가운데 정렬은 left/right로 */
 .toast { left: 0; right: 0; margin-inline: auto; width: max-content; }
 

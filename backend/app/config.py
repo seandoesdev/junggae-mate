@@ -18,6 +18,8 @@ class Settings:
     raw_dir: Path = Path(os.getenv("RAW_DOCS_DIR", "/data/raw"))
     static_dir: Path = Path(os.getenv("STATIC_DIR", str(Path(__file__).resolve().parents[2])))
     seed_on_start: bool = os.getenv("SEED_ON_START", "1") == "1"
+    # 회원가입(새 사무소 만들기)을 받을지. 0이면 기존 계정만 로그인
+    signup_enabled: bool = os.getenv("SIGNUP_ENABLED", "1") == "1"
     # 근거 게이트: 이 점수 미만이면 근거로 쓰지 않는다
     min_evidence_score: float = float(os.getenv("MIN_EVIDENCE_SCORE", "0.12"))
     # 화면을 다른 곳(예: Cloudflare)에서 내려줄 때 API를 부를 수 있는 화면 주소. 쉼표로 여러 개, 끝의 /는 무시
