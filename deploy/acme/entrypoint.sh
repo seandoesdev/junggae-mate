@@ -1,25 +1,27 @@
 #!/bin/sh
-# 인증서 발급·자동 갱신 (acme.sh). 기본 발급처는 ZeroSSL, 확인은 HTTP-01(80 포트).
+# 인증서 발급·자동 갱신 (acme.sh). 기본 발급처는 Let's Encrypt, 확인은 TLS-ALPN-01(443 포트만).
 # 결과: /certs/fullchain.pem, /certs/privkey.pem (nginx와 공유하는 certs 볼륨)
 #
 # 확인 방식 (ACME_CHALLENGE)
-#   http (기본) — 발급처가 http://도메인/.well-known/acme-challenge/… 를 확인한다.
+#   http        — 발급처가 http://도메인/.well-known/acme-challenge/… 를 확인한다.
 #                 nginx(80)가 그 경로를 acme_webroot 볼륨에서 내려주고, 나머지는 https로 돌린다.
-#   alpn        — 443만으로 확인(TLS-ALPN-01). nginx(443)가 ALPN acme-tls/1 연결을 이 컨테이너 10443으로 넘긴다.
+#   alpn (기본) — 443만으로 확인(TLS-ALPN-01). nginx(443)가 ALPN acme-tls/1 연결을 이 컨테이너 10443으로 넘긴다.
 #                 Let's Encrypt는 지원, ZeroSSL은 지원하지 않는다.
 #
 # 환경 변수
 #   API_DOMAIN       (필수) 인증서를 받을 도메인. A 레코드가 이 서버의 공인 IP를 가리켜야 한다
-#   ACME_EMAIL       ZeroSSL은 필수(계정 등록). 만료 안내도 이 주소로 온다
-#   ACME_SERVER      발급처. 기본 zerossl. 그 밖에 letsencrypt, letsencrypt_test, 또는 ACME 디렉터리 URL
-#   ACME_CHALLENGE   http(기본) | alpn
+#   ACME_EMAIL       (선택, ZeroSSL은 필수) 만료 안내 메일
+#   ACME_SERVER      발급처. 기본 letsencrypt. 그 밖에 zerossl, letsencrypt_test, 또는 ACME 디렉터리 URL
+#                    주의: kro.kr 같은 공유 무료 도메인은 Let's Encrypt의 '등록 도메인당 주 50장' 한도를
+#                    모든 사용자가 나눠 써 rateLimited로 실패할 수 있다 → 그때는 ACME_SERVER=zerossl, ACME_CHALLENGE=http
+#   ACME_CHALLENGE   alpn(기본) | http
 #   ZEROSSL_EAB_KID, ZEROSSL_EAB_HMAC_KEY  (선택) ZeroSSL 대시보드에서 만든 EAB. 없으면 이메일로 자동 등록
 #   ACME_ARGS        (선택) acme.sh --issue에 더할 인자 (예: --debug 2, --insecure)
 set -eu
 
 : "${API_DOMAIN:?API_DOMAIN이 필요합니다 (.env)}"
-SERVER="${ACME_SERVER:-zerossl}"
-CHALLENGE="${ACME_CHALLENGE:-http}"
+SERVER="${ACME_SERVER:-letsencrypt}"
+CHALLENGE="${ACME_CHALLENGE:-alpn}"
 WEBROOT=/acme-webroot
 CERT=/certs/fullchain.pem
 KEY=/certs/privkey.pem
