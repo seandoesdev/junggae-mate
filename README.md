@@ -110,6 +110,9 @@ cd frontend && npm ci && npm run typecheck && npm run build   # 화면 타입 �
 - **화면**: Cloudflare Pages `junggae-mate` → https://junggae-mate.kro.kr (CNAME → `junggae-mate.pages.dev`). 인증서는 Cloudflare가 자동 발급·갱신. 자세한 내용은 [frontend/README.md](frontend/README.md)
 - **API 서버**: `docker compose --profile https up -d` — nginx가 443으로 받아 `app:8000`으로 넘기고, acme.sh가 Let's Encrypt 인증서를 443의 TLS-ALPN-01 확인으로 자동 발급·갱신한다 (`kro.kr` 공유 한도 `rateLimited`에 걸리면 로그의 retry after 이후 acme 재시작) ([deploy/nginx/nginx.conf](deploy/nginx/nginx.conf), [deploy/acme/entrypoint.sh](deploy/acme/entrypoint.sh))
 
+> 도메인 대신 **서버 공인 IP**로도 된다: `API_DOMAIN=49.247.130.188`, `PUBLIC_BASE_URL=https://49.247.130.188`, 화면의 `API_URL=https://49.247.130.188`.
+> Let's Encrypt 단기 인증서(약 6일)를 받아 2~3일마다 자동 갱신하며, `kro.kr` 공유 도메인의 주 50장 한도와 무관하다.
+
 API 서버 `.env` (예시는 [.env.example](.env.example)):
 
 ```bash

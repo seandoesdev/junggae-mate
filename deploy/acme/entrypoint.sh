@@ -7,10 +7,13 @@
 #   http        — 80으로 확인(HTTP-01). nginx(80)가 /.well-known/acme-challenge/ 를 acme_webroot 볼륨에서 내려준다.
 #
 # 환경 변수
-#   API_DOMAIN       (필수) 인증서를 받을 도메인. A 레코드가 이 서버의 공인 IP를 가리켜야 한다
+#   API_DOMAIN       (필수) 인증서를 받을 도메인 또는 이 서버의 공인 IP 주소(예: 49.247.130.188).
+#                    도메인이면 A 레코드가 이 서버를 가리켜야 한다. IP면 Let's Encrypt 단기(약 6일) 인증서를
+#                    받고 2~3일마다 자동 갱신한다 - kro.kr 같은 공유 도메인의 '주 50장' 한도와 무관하다
 #   ACME_EMAIL       (선택) 만료 안내 메일
 #   ACME_SERVER      letsencrypt(기본) | letsencrypt_test(스테이징, 시험용) | ACME 디렉터리 URL
 #   ACME_CHALLENGE   alpn(기본) | http
+#   ACME_PROFILE     (선택) 인증서 프로필. 비우면 IP는 shortlived, 도메인은 기본. none이면 지정하지 않음
 #   ACME_ARGS        (선택) acme.sh --issue에 더할 인자 (예: --debug 2)
 # 참고: kro.kr 같은 공유 무료 도메인은 Let's Encrypt의 '등록 도메인당 주 50장' 한도를 모든 사용자가 나눠 써
 #       rateLimited로 실패할 수 있다. 그때는 로그의 retry after 시각 이후에 acme 컨테이너를 다시 시작한다.
@@ -32,6 +35,15 @@ case "$CHALLENGE" in
   *) echo "ACME_CHALLENGE는 alpn 또는 http 이어야 합니다: $CHALLENGE"; exit 1 ;;
 esac
 
+# IP 주소 인증서는 Let's Encrypt가 shortlived 프로필(약 160시간)로만 발급한다
+case "$API_DOMAIN" in
+  *[!0-9.]*|"") IS_IP=no ;;
+  *) IS_IP=yes ;;
+esac
+PROFILE="${ACME_PROFILE:-}"
+[ -z "$PROFILE" ] && [ "$IS_IP" = yes ] && PROFILE=shortlived
+[ "$PROFILE" = none ] && PROFILE=""
+
 # 1) 임시 자체 서명 인증서 — nginx가 먼저 떠야 Let's Encrypt의 확인 요청이 들어온다.
 #    도메인이 바뀌었으면(.env 수정) 임시 인증서도 새로 만든다
 current_cn=$(openssl x509 -noout -subject -in "$CERT" 2>/dev/null | sed -n 's/.*CN *= *//p' || true)
@@ -45,6 +57,7 @@ issue_once() {
   acme.sh --set-default-ca --server "$SERVER" >/dev/null
   # shellcheck disable=SC2086
   acme.sh --issue $MODE -d "$API_DOMAIN" --server "$SERVER" --force \
+    ${PROFILE:+--cert-profile "$PROFILE"} \
     ${ACME_EMAIL:+--accountemail "$ACME_EMAIL"} ${ACME_ARGS:-} \
     && acme.sh --install-cert -d "$API_DOMAIN" --key-file "$KEY" --fullchain-file "$CERT"
 }
@@ -56,7 +69,7 @@ if [ ! -s "$ISSUED" ]; then
     sleep 15   # nginx가 뜰 때까지
     n=1
     while :; do
-      echo "Let's Encrypt 인증서 발급 시도 $n/4 ($API_DOMAIN, 서버 $SERVER, 확인 $CHALLENGE)"
+      echo "Let's Encrypt 인증서 발급 시도 $n/4 ($API_DOMAIN, 서버 $SERVER, 확인 $CHALLENGE${PROFILE:+, 프로필 $PROFILE})"
       if issue_once; then
         echo "Let's Encrypt 인증서를 받았습니다 ($API_DOMAIN)"
         break

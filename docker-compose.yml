@@ -53,6 +53,8 @@ services:
       ACME_EMAIL: ${ACME_EMAIL:-}
       ACME_SERVER: ${ACME_SERVER:-letsencrypt}
       ACME_CHALLENGE: ${ACME_CHALLENGE:-alpn}
+      # API_DOMAIN이 IP면 자동으로 shortlived(약 6일, 자동 갱신). 직접 지정할 때만
+      ACME_PROFILE: ${ACME_PROFILE:-}
       # 시험할 때만: ACME_ARGS="--debug 2"
       ACME_ARGS: ${ACME_ARGS:-}
     volumes:
