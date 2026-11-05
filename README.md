@@ -108,13 +108,13 @@ cd frontend && npm ci && npm run typecheck && npm run build   # 화면 타입 �
 ## 배포 (화면 Cloudflare Pages + API 서버 직접 운영)
 
 - **화면**: Cloudflare Pages `junggae-mate` → https://junggae-mate.kro.kr (CNAME → `junggae-mate.pages.dev`). 인증서는 Cloudflare가 자동 발급·갱신. 자세한 내용은 [frontend/README.md](frontend/README.md)
-- **API 서버**: `docker compose --profile https up -d` — nginx가 443으로 받아 `app:8000`으로 넘기고, acme.sh가 Let's Encrypt 인증서를 443의 TLS-ALPN-01 확인으로 자동 발급·갱신한다 (`kro.kr` 한도에 걸리면 `ACME_SERVER=zerossl`, `ACME_CHALLENGE=http`) ([deploy/nginx/nginx.conf](deploy/nginx/nginx.conf), [deploy/acme/entrypoint.sh](deploy/acme/entrypoint.sh))
+- **API 서버**: `docker compose --profile https up -d` — nginx가 443으로 받아 `app:8000`으로 넘기고, acme.sh가 Let's Encrypt 인증서를 443의 TLS-ALPN-01 확인으로 자동 발급·갱신한다 (`kro.kr` 공유 한도 `rateLimited`에 걸리면 로그의 retry after 이후 acme 재시작) ([deploy/nginx/nginx.conf](deploy/nginx/nginx.conf), [deploy/acme/entrypoint.sh](deploy/acme/entrypoint.sh))
 
 API 서버 `.env` (예시는 [.env.example](.env.example)):
 
 ```bash
 API_DOMAIN=api-junggae-mate.kro.kr            # A 레코드 → 서버 공인 IP, 443 포트 개방
-ACME_EMAIL=<인증서 안내 받을 이메일>           # 만료 안내 (ZeroSSL을 쓰면 필수)
+ACME_EMAIL=<인증서 안내 받을 이메일>           # 만료 안내 (선택)
 COMPOSE_PROFILES=https                        # docker compose up -d만으로 nginx·acme까지
 APP_PORT=127.0.0.1:8000            # 8000은 밖으로 열지 않고 nginx(443)만 공개
 FORWARDED_ALLOW_IPS=*              # nginx가 알려 준 https를 앱이 믿도록
