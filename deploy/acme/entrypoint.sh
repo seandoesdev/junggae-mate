@@ -1,22 +1,19 @@
 #!/bin/sh
-# 인증서 발급·자동 갱신 (acme.sh). 기본 발급처는 Let's Encrypt, 확인은 TLS-ALPN-01(443 포트만).
+# Let's Encrypt 인증서 발급·자동 갱신 (acme.sh). 기본 확인 방식은 TLS-ALPN-01(443 포트만).
 # 결과: /certs/fullchain.pem, /certs/privkey.pem (nginx와 공유하는 certs 볼륨)
 #
 # 확인 방식 (ACME_CHALLENGE)
-#   http        — 발급처가 http://도메인/.well-known/acme-challenge/… 를 확인한다.
-#                 nginx(80)가 그 경로를 acme_webroot 볼륨에서 내려주고, 나머지는 https로 돌린다.
 #   alpn (기본) — 443만으로 확인(TLS-ALPN-01). nginx(443)가 ALPN acme-tls/1 연결을 이 컨테이너 10443으로 넘긴다.
-#                 Let's Encrypt는 지원, ZeroSSL은 지원하지 않는다.
+#   http        — 80으로 확인(HTTP-01). nginx(80)가 /.well-known/acme-challenge/ 를 acme_webroot 볼륨에서 내려준다.
 #
 # 환경 변수
 #   API_DOMAIN       (필수) 인증서를 받을 도메인. A 레코드가 이 서버의 공인 IP를 가리켜야 한다
-#   ACME_EMAIL       (선택, ZeroSSL은 필수) 만료 안내 메일
-#   ACME_SERVER      발급처. 기본 letsencrypt. 그 밖에 zerossl, letsencrypt_test, 또는 ACME 디렉터리 URL
-#                    주의: kro.kr 같은 공유 무료 도메인은 Let's Encrypt의 '등록 도메인당 주 50장' 한도를
-#                    모든 사용자가 나눠 써 rateLimited로 실패할 수 있다 → 그때는 ACME_SERVER=zerossl, ACME_CHALLENGE=http
+#   ACME_EMAIL       (선택) 만료 안내 메일
+#   ACME_SERVER      letsencrypt(기본) | letsencrypt_test(스테이징, 시험용) | ACME 디렉터리 URL
 #   ACME_CHALLENGE   alpn(기본) | http
-#   ZEROSSL_EAB_KID, ZEROSSL_EAB_HMAC_KEY  (선택) ZeroSSL 대시보드에서 만든 EAB. 없으면 이메일로 자동 등록
-#   ACME_ARGS        (선택) acme.sh --issue에 더할 인자 (예: --debug 2, --insecure)
+#   ACME_ARGS        (선택) acme.sh --issue에 더할 인자 (예: --debug 2)
+# 참고: kro.kr 같은 공유 무료 도메인은 Let's Encrypt의 '등록 도메인당 주 50장' 한도를 모든 사용자가 나눠 써
+#       rateLimited로 실패할 수 있다. 그때는 로그의 retry after 시각 이후에 acme 컨테이너를 다시 시작한다.
 set -eu
 
 : "${API_DOMAIN:?API_DOMAIN이 필요합니다 (.env)}"
@@ -29,17 +26,13 @@ HOME_DIR="${LE_CONFIG_HOME:-/acme.sh}"
 ISSUED="$HOME_DIR/${API_DOMAIN}_ecc/fullchain.cer"
 mkdir -p /certs "$WEBROOT/.well-known/acme-challenge"
 
-if [ "$SERVER" = "zerossl" ] && [ -z "${ACME_EMAIL:-}" ] && [ -z "${ZEROSSL_EAB_KID:-}" ]; then
-  echo "ZeroSSL은 계정 등록에 ACME_EMAIL(또는 ZEROSSL_EAB_KID·ZEROSSL_EAB_HMAC_KEY)이 필요합니다 (.env)"
-  exit 1
-fi
 case "$CHALLENGE" in
-  http) MODE="--webroot $WEBROOT" ;;
   alpn) MODE="--alpn --tlsport 10443" ;;
-  *) echo "ACME_CHALLENGE는 http 또는 alpn 이어야 합니다: $CHALLENGE"; exit 1 ;;
+  http) MODE="--webroot $WEBROOT" ;;
+  *) echo "ACME_CHALLENGE는 alpn 또는 http 이어야 합니다: $CHALLENGE"; exit 1 ;;
 esac
 
-# 1) 임시 자체 서명 인증서 — nginx가 먼저 떠야 발급처의 확인 요청이 들어온다.
+# 1) 임시 자체 서명 인증서 — nginx가 먼저 떠야 Let's Encrypt의 확인 요청이 들어온다.
 #    도메인이 바뀌었으면(.env 수정) 임시 인증서도 새로 만든다
 current_cn=$(openssl x509 -noout -subject -in "$CERT" 2>/dev/null | sed -n 's/.*CN *= *//p' || true)
 if [ ! -s "$CERT" ] || [ ! -s "$KEY" ] || { [ ! -s "$ISSUED" ] && [ "$current_cn" != "$API_DOMAIN" ]; }; then
@@ -48,20 +41,8 @@ if [ ! -s "$CERT" ] || [ ! -s "$KEY" ] || { [ ! -s "$ISSUED" ] && [ "$current_cn
     -keyout "$KEY" -out "$CERT" >/dev/null 2>&1
 fi
 
-register_account() {
-  acme.sh --set-default-ca --server "$SERVER" >/dev/null
-  if [ "$SERVER" = "zerossl" ]; then
-    if [ -n "${ZEROSSL_EAB_KID:-}" ] && [ -n "${ZEROSSL_EAB_HMAC_KEY:-}" ]; then
-      acme.sh --register-account --server zerossl --eab-kid "$ZEROSSL_EAB_KID" --eab-hmac-key "$ZEROSSL_EAB_HMAC_KEY" \
-        ${ACME_EMAIL:+-m "$ACME_EMAIL"}
-    else
-      acme.sh --register-account --server zerossl -m "$ACME_EMAIL"
-    fi
-  fi
-}
-
 issue_once() {
-  register_account
+  acme.sh --set-default-ca --server "$SERVER" >/dev/null
   # shellcheck disable=SC2086
   acme.sh --issue $MODE -d "$API_DOMAIN" --server "$SERVER" --force \
     ${ACME_EMAIL:+--accountemail "$ACME_EMAIL"} ${ACME_ARGS:-} \
@@ -69,14 +50,15 @@ issue_once() {
 }
 
 # 2) 아직 발급받은 인증서가 없으면 발급. 실패하면 15분 간격으로 최대 4번 다시 시도한다
+#    (Let's Encrypt는 같은 이름의 확인 실패를 1시간에 5번까지 허용한다)
 if [ ! -s "$ISSUED" ]; then
   (
     sleep 15   # nginx가 뜰 때까지
     n=1
     while :; do
-      echo "인증서 발급 시도 $n/4 ($API_DOMAIN, 발급처 $SERVER, 확인 $CHALLENGE)"
+      echo "Let's Encrypt 인증서 발급 시도 $n/4 ($API_DOMAIN, 서버 $SERVER, 확인 $CHALLENGE)"
       if issue_once; then
-        echo "인증서를 받았습니다 ($API_DOMAIN, 발급처 $SERVER)"
+        echo "Let's Encrypt 인증서를 받았습니다 ($API_DOMAIN)"
         break
       fi
       echo "발급 실패 $n/4: 바로 위 acme.sh 로그의 오류(Verify error, Invalid status, rateLimited 등)를 확인하세요."
@@ -85,14 +67,15 @@ if [ ! -s "$ISSUED" ]; then
       else
         echo "  점검: $API_DOMAIN A 레코드 → 이 서버 공인 IP, 밖에서 TCP 443 접속, nginx 컨테이너 실행 중"
       fi
+      echo "  rateLimited(too many certificates … for \"kro.kr\")면 로그의 retry after 시각 이후 acme를 다시 시작하세요."
       [ "$n" -ge 4 ] && { echo "자동 재시도를 멈춥니다. 원인을 고친 뒤 acme 컨테이너를 다시 시작하세요."; break; }
       n=$((n + 1))
       sleep 900
     done
   ) &
 else
-  echo "발급받은 인증서가 있습니다 ($API_DOMAIN). 갱신은 하루 네 번 자동 확인합니다"
+  echo "발급받은 Let's Encrypt 인증서가 있습니다 ($API_DOMAIN). 갱신은 하루 네 번 자동 확인합니다"
 fi
 
-# 3) 하루 네 번 갱신 확인 (만료 전에 자동 갱신, 이미지 기본 크론). 발급 때 쓴 방식·위치를 acme.sh가 기억한다
+# 3) 하루 네 번 갱신 확인 (만료 30일 전에 갱신, 이미지 기본 크론). 발급 때 쓴 방식·위치를 acme.sh가 기억한다
 exec /entry.sh daemon
