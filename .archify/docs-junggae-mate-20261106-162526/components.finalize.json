@@ -1,0 +1,454 @@
+{
+  "schemaVersion": 1,
+  "ok": true,
+  "command": "finalize",
+  "status": "pass",
+  "type": "explainer",
+  "quality": "showcase",
+  "startedAt": "2026-11-06T07:51:35.471Z",
+  "specification": {
+    "path": "E:\\private-projects\\중개메이트_사용자워크플로우\\.archify\\docs-junggae-mate-20261106-162526\\components.archify.md",
+    "sha256": "e71246fac01129f4e80f8e6b688c3aef300f91dbaf82ba2dfa55b4ef065ea6e0",
+    "bytes": 9234
+  },
+  "artifact": {
+    "path": "E:\\private-projects\\중개메이트_사용자워크플로우\\.archify\\docs-junggae-mate-20261106-162526\\components.html",
+    "sha256": "f3e7f84bf8c9ff678510349b5c7c5b4148c22278a97f075bb905126727fea491",
+    "bytes": 859388
+  },
+  "stages": {
+    "browser-check": {
+      "status": "not-run",
+      "execution": "not-requested"
+    },
+    "validate": {
+      "status": "pass",
+      "exitCode": 0,
+      "durationMs": null,
+      "execution": "embedded-in-deliver",
+      "command": [
+        "C:\\Program Files\\nodejs\\node.exe",
+        "C:\\Users\\Sean\\.claude\\skills\\archify\\bin\\archify.mjs",
+        "deliver",
+        "explainer",
+        "E:\\private-projects\\중개메이트_사용자워크플로우\\.archify\\docs-junggae-mate-20261106-162526\\components.archify.md",
+        "E:\\private-projects\\중개메이트_사용자워크플로우\\.archify\\docs-junggae-mate-20261106-162526\\components.html",
+        "--quality",
+        "showcase",
+        "--repo-root",
+        "E:\\private-projects\\중개메이트_사용자워크플로우",
+        "--json"
+      ],
+      "receipt": {
+        "schemaVersion": 1,
+        "ok": true,
+        "command": "validate",
+        "specification": {
+          "sha256": "e71246fac01129f4e80f8e6b688c3aef300f91dbaf82ba2dfa55b4ef065ea6e0",
+          "bytes": 9234
+        },
+        "validation": {
+          "checksPassed": 4,
+          "checkCount": 4,
+          "compositionProfile": "showcase",
+          "compositionStatus": "pass",
+          "errors": 0,
+          "warnings": 0
+        }
+      }
+    },
+    "deliver": {
+      "status": "pass",
+      "exitCode": 0,
+      "durationMs": 2060,
+      "command": [
+        "C:\\Program Files\\nodejs\\node.exe",
+        "C:\\Users\\Sean\\.claude\\skills\\archify\\bin\\archify.mjs",
+        "deliver",
+        "explainer",
+        "E:\\private-projects\\중개메이트_사용자워크플로우\\.archify\\docs-junggae-mate-20261106-162526\\components.archify.md",
+        "E:\\private-projects\\중개메이트_사용자워크플로우\\.archify\\docs-junggae-mate-20261106-162526\\components.html",
+        "--quality",
+        "showcase",
+        "--repo-root",
+        "E:\\private-projects\\중개메이트_사용자워크플로우",
+        "--json"
+      ],
+      "receipt": {
+        "schemaVersion": 1,
+        "receiptId": "109653f7-953a-409c-89a4-6ed5c7b5be7a",
+        "ok": true,
+        "command": "deliver",
+        "type": "explainer",
+        "input": "E:\\private-projects\\중개메이트_사용자워크플로우\\.archify\\docs-junggae-mate-20261106-162526\\components.archify.md",
+        "output": "E:\\private-projects\\중개메이트_사용자워크플로우\\.archify\\docs-junggae-mate-20261106-162526\\components.html",
+        "explainer": {
+          "preparedSha256": "0feae1dfc46e0d53c13877f751be5372cba1c82953d23031bfedcb4908a0bb5a",
+          "dependencies": [
+            {
+              "kind": "repository",
+              "id": "pages-config",
+              "path": "frontend/functions/config.json.ts",
+              "revision": "ccc8778e03ff6f94b7cd92850e1b4cdf6a70c525",
+              "sha256": "e8c415b9d3dc6f95a3710a48704fe3cb34f45248ad1d2f260e7c85ea19da4760",
+              "bytes": 1133
+            },
+            {
+              "kind": "repository",
+              "id": "app-views",
+              "path": "frontend/src/App.tsx",
+              "revision": "ccc8778e03ff6f94b7cd92850e1b4cdf6a70c525",
+              "sha256": "285cbd124ba2b84bc6737effd30fdc9b0b919411bcc3a7a409ad46a1d7fe2007",
+              "bytes": 3418
+            },
+            {
+              "kind": "repository",
+              "id": "nginx-conf",
+              "path": "deploy/nginx/nginx.conf",
+              "revision": "ccc8778e03ff6f94b7cd92850e1b4cdf6a70c525",
+              "sha256": "897d88e9c875b0b5db97c3092f8f4a810a7acd77c48d473623ac85198e7e08bb",
+              "bytes": 3160
+            },
+            {
+              "kind": "repository",
+              "id": "acme-entry",
+              "path": "deploy/acme/entrypoint.sh",
+              "revision": "ccc8778e03ff6f94b7cd92850e1b4cdf6a70c525",
+              "sha256": "7cffa9d2735538798866f2dd2934e9e7f6a241187dc06a9d7aeff3785ccf3079",
+              "bytes": 5085
+            },
+            {
+              "kind": "repository",
+              "id": "main-cors",
+              "path": "backend/app/main.py",
+              "revision": "ccc8778e03ff6f94b7cd92850e1b4cdf6a70c525",
+              "sha256": "31ea79352ee25858809072248783181992eb66c5440f96cb72eb74b5182c01c3",
+              "bytes": 4693
+            },
+            {
+              "kind": "repository",
+              "id": "assistant-answer",
+              "path": "backend/app/assistant.py",
+              "revision": "ccc8778e03ff6f94b7cd92850e1b4cdf6a70c525",
+              "sha256": "8144284dee50bfc2abdb1bdb987d989ff36401eac98418deb81ace47aa7254a6",
+              "bytes": 37114
+            },
+            {
+              "kind": "repository",
+              "id": "hood-ask",
+              "path": "backend/app/hood.py",
+              "revision": "ccc8778e03ff6f94b7cd92850e1b4cdf6a70c525",
+              "sha256": "76a49996ebea1c09997917e317d1f1d46e34a94a3b07a978eb613c12099365f8",
+              "bytes": 12882
+            },
+            {
+              "kind": "repository",
+              "id": "rag-search",
+              "path": "backend/app/rag.py",
+              "revision": "ccc8778e03ff6f94b7cd92850e1b4cdf6a70c525",
+              "sha256": "b5da7b13603414e8814ec0b20985cba45374cc866ac5baa7071428728e99024a",
+              "bytes": 11319
+            },
+            {
+              "kind": "repository",
+              "id": "structured-facts",
+              "path": "backend/app/structured.py",
+              "revision": "ccc8778e03ff6f94b7cd92850e1b4cdf6a70c525",
+              "sha256": "ccc38840ffd77eb5a0c44f737681525cbf567e368b2cd4ecd69c026550466204",
+              "bytes": 20724
+            },
+            {
+              "kind": "repository",
+              "id": "workflow-stage",
+              "path": "backend/app/workflow.py",
+              "revision": "ccc8778e03ff6f94b7cd92850e1b4cdf6a70c525",
+              "sha256": "e35836c080635d7a3babfd54cfff6f3a81a6afadba7649d009669852d6002f70",
+              "bytes": 22884
+            },
+            {
+              "kind": "repository",
+              "id": "public-store",
+              "path": "backend/app/public_sources.py",
+              "revision": "ccc8778e03ff6f94b7cd92850e1b4cdf6a70c525",
+              "sha256": "94a4a55b220693d15fa22157166c7584a2989a3aeb115370c8aa9e6b86f52513",
+              "bytes": 19561
+            },
+            {
+              "kind": "repository",
+              "id": "schema",
+              "path": "backend/sql/schema.sql",
+              "revision": "ccc8778e03ff6f94b7cd92850e1b4cdf6a70c525",
+              "sha256": "e52fc777c43d2ed6072a68abf454aec2d843a92f979ec80bfe5a1efe940e24d1",
+              "bytes": 15961
+            },
+            {
+              "kind": "repository",
+              "id": "compose",
+              "path": "docker-compose.yml",
+              "revision": "ccc8778e03ff6f94b7cd92850e1b4cdf6a70c525",
+              "sha256": "1d5cea55b279495c7776967f98b5fd33968adf91eb2ee53a3f53568feb20fc0e",
+              "bytes": 3181
+            },
+            {
+              "kind": "diagram-spec",
+              "id": "component-map",
+              "inline": true,
+              "sha256": "ac0e3f8906154c41e1bff06fb0ae021a6780416b08ac77ea99edc9d2514dd3bc",
+              "bytes": 1450
+            }
+          ]
+        },
+        "specification": {
+          "sha256": "e71246fac01129f4e80f8e6b688c3aef300f91dbaf82ba2dfa55b4ef065ea6e0",
+          "bytes": 9234
+        },
+        "artifact": {
+          "sha256": "f3e7f84bf8c9ff678510349b5c7c5b4148c22278a97f075bb905126727fea491",
+          "bytes": 859388
+        },
+        "validation": {
+          "checksPassed": 4,
+          "checkCount": 4,
+          "compositionProfile": "showcase",
+          "compositionStatus": "pass",
+          "errors": 0,
+          "warnings": 0
+        },
+        "update": {
+          "status": "unavailable",
+          "installedVersion": null,
+          "availableVersion": null,
+          "releaseNotes": null,
+          "checkedAt": null,
+          "source": null,
+          "noticeRequired": false,
+          "noticeText": null,
+          "reason": "disabled"
+        }
+      }
+    },
+    "check": {
+      "status": "pass",
+      "exitCode": 0,
+      "durationMs": 748,
+      "command": [
+        "C:\\Program Files\\nodejs\\node.exe",
+        "C:\\Users\\Sean\\.claude\\skills\\archify\\bin\\archify.mjs",
+        "check",
+        "E:\\private-projects\\중개메이트_사용자워크플로우\\.archify\\docs-junggae-mate-20261106-162526\\components.html",
+        "--require-provenance"
+      ],
+      "receipt": {
+        "ok": true,
+        "file": "E:\\private-projects\\중개메이트_사용자워크플로우\\.archify\\docs-junggae-mate-20261106-162526\\components.html",
+        "family": "explainer",
+        "artifact": {
+          "sha256": "f3e7f84bf8c9ff678510349b5c7c5b4148c22278a97f075bb905126727fea491",
+          "bytes": 859388
+        },
+        "checks": [
+          {
+            "name": "explainer_structure",
+            "ok": true,
+            "details": [
+              "81 unique DOM IDs"
+            ]
+          },
+          {
+            "name": "explainer_payload_identity",
+            "ok": true,
+            "details": []
+          },
+          {
+            "name": "explainer_dependencies",
+            "ok": true,
+            "details": [
+              "14 frozen dependencies"
+            ]
+          },
+          {
+            "name": "explainer_native_diagrams",
+            "ok": true,
+            "details": [
+              "component-map: pass"
+            ]
+          }
+        ],
+        "composition": {
+          "schemaVersion": 1,
+          "profile": "showcase",
+          "status": "pass",
+          "summary": {
+            "errors": 0,
+            "warnings": 0
+          },
+          "issues": [],
+          "nativeDiagrams": [
+            {
+              "id": "component-map",
+              "receipt": {
+                "ok": true,
+                "file": "C:\\Users\\Sean\\AppData\\Local\\Temp\\archify-explainer-check-N0YXAG\\child.html",
+                "artifact": {
+                  "sha256": "44369aec02d9035c6e85811a8c1f8d5c0b86927e479ce00713571cc73e343a8b",
+                  "bytes": 843185
+                },
+                "checks": [
+                  {
+                    "name": "single_svg",
+                    "ok": true,
+                    "details": [
+                      "found 1 <svg> block(s)"
+                    ]
+                  },
+                  {
+                    "name": "finite_svg",
+                    "ok": true,
+                    "details": []
+                  },
+                  {
+                    "name": "orthogonal_arrows",
+                    "ok": true,
+                    "details": []
+                  },
+                  {
+                    "name": "label_route_clearance",
+                    "ok": true,
+                    "details": []
+                  },
+                  {
+                    "name": "relationship_crossings",
+                    "ok": true,
+                    "details": []
+                  },
+                  {
+                    "name": "relationship_corridors",
+                    "ok": true,
+                    "details": []
+                  },
+                  {
+                    "name": "container_border_runs",
+                    "ok": true,
+                    "details": []
+                  },
+                  {
+                    "name": "route_rhythm",
+                    "ok": true,
+                    "details": []
+                  },
+                  {
+                    "name": "legend_clearance",
+                    "ok": true,
+                    "details": []
+                  }
+                ],
+                "composition": {
+                  "schemaVersion": 1,
+                  "profile": "showcase",
+                  "status": "pass",
+                  "summary": {
+                    "errors": 0,
+                    "warnings": 0
+                  },
+                  "metrics": {
+                    "properCrossings": 0,
+                    "resolvedCrossovers": 0,
+                    "ambiguousCorridors": 0,
+                    "arrowheadCollisions": 0,
+                    "containerBorderRuns": 0,
+                    "labelRouteClearanceIssues": 0,
+                    "labelCanvasOverflowIssues": 0,
+                    "minLabelRouteClearance": 79.6,
+                    "desktopReadabilityIssues": 0,
+                    "viewportHeightIssues": 0,
+                    "minProjectedNodeTextPx": 7.5,
+                    "maxBends": 1,
+                    "routesOverSuggestedBends": 0,
+                    "maxStretch": 1,
+                    "routesOverSuggestedStretch": 0,
+                    "minSegmentPx": 142,
+                    "minInteriorSegmentPx": null,
+                    "shortSegmentCount": 0,
+                    "shortEndpointSegmentCount": 0,
+                    "shortInteriorSegmentCount": 0,
+                    "microSegmentCount": 0
+                  },
+                  "suggestedLimits": {
+                    "bendsPerRelationship": 2,
+                    "stretch": 1.35,
+                    "segmentPx": 16,
+                    "microSegmentPx": 8
+                  },
+                  "routeReview": {
+                    "crossings": [],
+                    "detours": []
+                  },
+                  "leadingSpace": {
+                    "measured": true,
+                    "emptyTopPx": 80,
+                    "emptyTopRatio": 0.138,
+                    "occupiedTop": 80,
+                    "viewBoxTop": 0,
+                    "canvasHeight": 580,
+                    "typicalNodeHeight": 60,
+                    "reviewSuggested": false
+                  },
+                  "desktopReadability": {
+                    "budgetBasis": "recognized-declared-wide",
+                    "readerContract": "declared-wide-v1",
+                    "availableDiagramWidth": 1222.5,
+                    "actualBudgetPx": 1222.5,
+                    "actualReaderWidth": 1252.5,
+                    "desiredReaderWidth": 1252.5,
+                    "viewportCap": 1376,
+                    "limit": "source-size",
+                    "requestedTargetPx": 7.5,
+                    "requestedTargetMet": true,
+                    "hardFloorPx": 6,
+                    "hardFloorMet": true,
+                    "minimumOwner": {
+                      "kind": "edge",
+                      "id": "pages-to-nginx-1",
+                      "from": "pages",
+                      "to": "nginx"
+                    },
+                    "minimumSourceTextPx": 8,
+                    "minimumProjectedTextPx": 7.5,
+                    "semanticTextCount": 15
+                  },
+                  "issues": []
+                }
+              }
+            }
+          ]
+        },
+        "diagnostics": [],
+        "provenance": "current",
+        "deliveryReceiptId": "109653f7-953a-409c-89a4-6ed5c7b5be7a"
+      }
+    }
+  },
+  "browserCheck": {
+    "requested": false,
+    "ran": false
+  },
+  "diagnostics": [],
+  "evidence": {
+    "receipt": "E:\\private-projects\\중개메이트_사용자워크플로우\\.archify\\docs-junggae-mate-20261106-162526\\components.finalize.json",
+    "summaryReceipt": "E:\\private-projects\\중개메이트_사용자워크플로우\\.archify\\docs-junggae-mate-20261106-162526\\components.finalize-summary.json"
+  },
+  "visualReview": "not-requested",
+  "finishedAt": "2026-11-06T07:51:39.014Z",
+  "durationMs": 3543,
+  "update": {
+    "status": "unavailable",
+    "installedVersion": null,
+    "availableVersion": null,
+    "releaseNotes": null,
+    "checkedAt": null,
+    "source": null,
+    "noticeRequired": false,
+    "noticeText": null,
+    "reason": "timeout"
+  }
+}

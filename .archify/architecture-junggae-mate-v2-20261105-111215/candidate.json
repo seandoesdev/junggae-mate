@@ -1,0 +1,140 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "중개메이트 시스템 전체 구조",
+    "locale": "ko",
+    "output": ".archify/architecture-junggae-mate-v2-20261105-111215/junggae-mate-system.html",
+    "quality_profile": "showcase",
+    "repository": {
+      "url": "https://github.com/seandoesdev/junggae-mate.git",
+      "provider": "github",
+      "link_mode": "web",
+      "revision": "ccc8778e03ff6f94b7cd92850e1b4cdf6a70c525"
+    }
+  },
+  "components": [
+    { "id": "user", "type": "external", "label": "중개사·관리자", "sublabel": "브라우저", "pos": [290, 40], "size": [150, 64] },
+    { "id": "pagesfn", "type": "cloud", "label": "config.json", "sublabel": "Pages Function", "tag": "API 주소 = API_URL", "pos": [40, 170], "size": [150, 64],
+      "sources": [
+        { "path": "frontend/functions/config.json.ts", "line": 21, "end_line": 30, "label": "/config.json" },
+        { "path": "frontend/wrangler.jsonc", "line": 7, "end_line": 8, "label": "Pages 프로젝트" }
+      ] },
+    { "id": "app", "type": "frontend", "label": "React 화면", "sublabel": "Cloudflare Pages", "tag": "junggae-mate.kro.kr", "pos": [290, 170], "size": [150, 64],
+      "sources": [
+        { "path": "frontend/src/App.tsx", "line": 16, "end_line": 25, "label": "화면 구성" },
+        { "path": "frontend/src/lib/config.ts", "line": 18, "end_line": 23, "label": "API 주소 받기" },
+        { "path": "frontend/src/lib/api.ts", "line": 52, "label": "/api 호출" }
+      ] },
+    { "id": "osm", "type": "external", "label": "OpenStreetMap", "sublabel": "지도 타일", "pos": [540, 170], "size": [150, 64],
+      "sources": [{ "path": "frontend/src/features/map/leaflet.ts", "line": 21 }] },
+    { "id": "customer", "type": "external", "label": "고객", "sublabel": "공유 보고서", "pos": [40, 300], "size": [150, 64] },
+    { "id": "nginx", "type": "security", "label": "nginx :443", "sublabel": "TLS 종료·프록시", "tag": "ALPN으로 분기", "pos": [290, 300], "size": [150, 64],
+      "sources": [
+        { "path": "deploy/nginx/nginx.conf", "line": 18, "end_line": 34, "label": "443 ALPN 분기" },
+        { "path": "deploy/nginx/nginx.conf", "line": 76, "end_line": 90, "label": "app:8000 프록시" },
+        { "path": "docker-compose.yml", "line": 73, "end_line": 83, "label": "nginx 서비스" }
+      ] },
+    { "id": "acme", "type": "security", "label": "acme.sh", "sublabel": "인증서 발급·갱신", "tag": "IP면 shortlived", "pos": [540, 300], "size": [150, 64],
+      "sources": [
+        { "path": "deploy/acme/entrypoint.sh", "line": 38, "end_line": 46, "label": "IP → shortlived" },
+        { "path": "deploy/acme/entrypoint.sh", "line": 56, "end_line": 63, "label": "발급·설치" },
+        { "path": "docker-compose.yml", "line": 47, "end_line": 64, "label": "acme 서비스" }
+      ] },
+    { "id": "le", "type": "external", "label": "Let's Encrypt", "sublabel": "ACME 인증 기관", "pos": [790, 300], "size": [150, 64] },
+    { "id": "api", "type": "backend", "label": "FastAPI", "sublabel": "/api · CORS", "tag": "JWT·회원가입", "pos": [290, 430], "size": [150, 64],
+      "sources": [
+        { "path": "backend/app/main.py", "line": 64, "end_line": 91, "label": "CORS·라우터" },
+        { "path": "backend/app/api.py", "line": 283, "end_line": 320, "label": "로그인·회원가입" }
+      ] },
+    { "id": "hood", "type": "backend", "label": "Hood AI 대화", "sublabel": "hood.py", "tag": "세션·검색 추적", "pos": [540, 430], "size": [150, 64],
+      "sources": [
+        { "path": "backend/app/api.py", "line": 641, "end_line": 650, "label": "POST /search" },
+        { "path": "backend/app/hood.py", "line": 72, "end_line": 118 }
+      ] },
+    { "id": "assistant", "type": "backend", "label": "답변 조립", "sublabel": "assistant.py", "tag": "라우팅·근거 게이트", "pos": [540, 560], "size": [150, 64],
+      "sources": [{ "path": "backend/app/assistant.py", "line": 455, "end_line": 500, "label": "answer()" }] },
+    { "id": "structured", "type": "backend", "label": "구조화 근거", "sublabel": "structured.py", "tag": "매물↔공공데이터", "pos": [790, 560], "size": [150, 64],
+      "sources": [
+        { "path": "backend/app/structured.py", "line": 132, "end_line": 170, "label": "연결 확정" },
+        { "path": "backend/app/structured.py", "line": 327, "end_line": 345, "label": "facts()" }
+      ] },
+    { "id": "llm", "type": "external", "label": "Claude API", "sublabel": "키 있을 때만", "pos": [540, 690], "size": [150, 64],
+      "sources": [
+        { "path": "backend/app/llm.py", "line": 28, "end_line": 35, "label": "사용 조건" },
+        { "path": "backend/app/llm.py", "line": 54, "end_line": 66 }
+      ] },
+    { "id": "rag", "type": "backend", "label": "문서 검색", "sublabel": "rag.py", "tag": "벡터 0.6 + 키워드 0.4", "pos": [790, 690], "size": [150, 64],
+      "sources": [
+        { "path": "backend/app/rag.py", "line": 86, "end_line": 100, "label": "하이브리드 검색" },
+        { "path": "backend/app/rag.py", "line": 163, "label": "근거 게이트" }
+      ] },
+    { "id": "workflow", "type": "backend", "label": "거래·보고서", "sublabel": "workflow.py", "tag": "단계·공유 링크", "pos": [790, 820], "size": [150, 64],
+      "sources": [
+        { "path": "backend/app/workflow.py", "line": 91, "end_line": 121, "label": "거래 단계" },
+        { "path": "backend/app/workflow.py", "line": 199, "end_line": 240, "label": "보고서·공유" },
+        { "path": "backend/app/api.py", "line": 629, "end_line": 640, "label": "/r/{token}" }
+      ] },
+    { "id": "collector", "type": "backend", "label": "공공데이터 수집", "sublabel": "관리자 전용", "pos": [790, 950], "size": [150, 64],
+      "sources": [
+        { "path": "backend/app/api.py", "line": 884, "end_line": 892, "label": "수집 요청" },
+        { "path": "backend/app/public_catalog.py", "line": 168, "end_line": 199, "label": "호출" },
+        { "path": "backend/app/public_sources.py", "line": 254, "end_line": 283, "label": "정규화 저장" }
+      ] },
+    { "id": "datagokr", "type": "external", "label": "공공데이터포털", "sublabel": "apis.data.go.kr", "pos": [790, 1080], "size": [150, 64],
+      "sources": [{ "path": "backend/app/public_catalog.py", "line": 39, "end_line": 75, "label": "데이터셋 주소" }] },
+    { "id": "db", "type": "database", "label": "PostgreSQL", "sublabel": "pgvector · pg_trgm", "tag": "사무소별 분리", "pos": [1040, 430], "size": [150, 584],
+      "sources": [
+        { "path": "docker-compose.yml", "line": 4, "end_line": 17, "label": "db 서비스" },
+        { "path": "backend/sql/schema.sql", "line": 2, "end_line": 17, "label": "확장·사무소·사용자" }
+      ] }
+  ],
+  "boundaries": [
+    { "kind": "region", "label": "Cloudflare Pages", "wraps": ["pagesfn", "app"] }
+  ],
+  "connections": [
+    { "id": "user-app", "from": "user", "to": "app", "label": "HTTPS", "variant": "emphasis" },
+    { "id": "app-config", "from": "app", "to": "pagesfn", "label": "API 주소" },
+    { "id": "app-tiles", "from": "app", "to": "osm", "label": "지도 타일", "variant": "dashed" },
+    { "id": "app-nginx", "from": "app", "to": "nginx", "label": "/api + JWT", "variant": "emphasis" },
+    { "id": "customer-nginx", "from": "customer", "to": "nginx", "label": "/r/{token}" },
+    { "id": "nginx-acme", "from": "nginx", "to": "acme", "label": "acme-tls/1", "variant": "security" },
+    { "id": "acme-le", "from": "acme", "to": "le", "label": "TLS-ALPN-01", "variant": "security" },
+    { "id": "nginx-api", "from": "nginx", "to": "api", "label": "proxy :8000", "variant": "emphasis" },
+    { "id": "api-hood", "from": "api", "to": "hood", "label": "/search", "variant": "emphasis" },
+    { "id": "hood-assistant", "from": "hood", "to": "assistant", "label": "answer()", "variant": "emphasis" },
+    { "id": "hood-db", "from": "hood", "to": "db", "label": "대화·검색 추적" },
+    { "id": "assistant-structured", "from": "assistant", "to": "structured", "label": "facts()" },
+    { "id": "assistant-rag", "from": "assistant", "to": "rag", "label": "search()" },
+    { "id": "assistant-llm", "from": "assistant", "to": "llm", "label": "근거→문장", "variant": "dashed" },
+    { "id": "structured-db", "from": "structured", "to": "db", "label": "SQL" },
+    { "id": "rag-db", "from": "rag", "to": "db", "label": "hybrid" },
+    { "id": "api-workflow", "from": "api", "to": "workflow", "label": "거래·보고서", "fromSide": "bottom", "toSide": "left", "via": [[365, 852]] },
+    { "id": "workflow-db", "from": "workflow", "to": "db", "label": "SQL" },
+    { "id": "api-collector", "from": "api", "to": "collector", "label": "관리자 수집", "variant": "security", "fromSide": "left", "toSide": "left", "via": [[215, 462], [215, 982]] },
+    { "id": "collector-db", "from": "collector", "to": "db", "label": "upsert" },
+    { "id": "collector-portal", "from": "collector", "to": "datagokr", "label": "serviceKey" }
+  ],
+  "cards": [
+    { "dot": "cyan", "title": "배포", "items": [
+      "화면: Cloudflare Pages (junggae-mate.kro.kr → CNAME junggae-mate.pages.dev)",
+      "config.json이 API 주소를 알려 줘 서버 주소를 바꿔도 다시 빌드하지 않음",
+      "API 서버: Docker Compose(nginx·acme·app·db), 밖에는 443만 공개, app은 127.0.0.1:8000"
+    ] },
+    { "dot": "violet", "title": "HTTPS 인증서", "items": [
+      "Let's Encrypt, 443만으로 확인(TLS-ALPN-01): nginx가 ALPN acme-tls/1만 acme로 넘김",
+      "API_DOMAIN이 IP면 단기 인증서(약 6일)를 2~3일마다 자동 갱신 — kro.kr 주 50장 한도 회피",
+      "acme가 인증서를 공유 볼륨에 넣으면 nginx가 1분 안에 다시 읽음"
+    ] },
+    { "dot": "emerald", "title": "Hood AI 답변", "items": [
+      "질문을 매물·실거래·전월세·단지·건축물·역·문서 경로로 나눔",
+      "구조화 근거(SQL)와 문서 근거(검색)를 근거 번호로 묶고, 부족하면 단정하지 않음",
+      "Claude 키가 없으면 규칙 기반 문장으로 답함"
+    ] },
+    { "dot": "rose", "title": "보안", "items": [
+      "JWT(HS256)·PBKDF2, 회원가입 = 새 사무소의 관리자, 사무소별 데이터 분리",
+      "CORS는 허용한 화면 주소만, 공공데이터 수집은 관리자만",
+      "고객은 만료 기한이 있는 공유 링크로 보고서만 열람"
+    ] }
+  ]
+}

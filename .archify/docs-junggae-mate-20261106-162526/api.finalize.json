@@ -1,0 +1,244 @@
+{
+  "schemaVersion": 1,
+  "ok": true,
+  "command": "finalize",
+  "status": "pass",
+  "type": "explainer",
+  "quality": "showcase",
+  "startedAt": "2026-11-06T07:45:22.183Z",
+  "specification": {
+    "path": "E:\\private-projects\\중개메이트_사용자워크플로우\\.archify\\docs-junggae-mate-20261106-162526\\api.archify.md",
+    "sha256": "35f5a6a23b475b47209add1ce8d5bd63603256225de383c8fea6528ad00f7e58",
+    "bytes": 12201
+  },
+  "artifact": {
+    "path": "E:\\private-projects\\중개메이트_사용자워크플로우\\.archify\\docs-junggae-mate-20261106-162526\\api.html",
+    "sha256": "b341675b7c42b37fd87cc5db81580dc4b4ba8bac656cd0ae71309ab9dd9dc74b",
+    "bytes": 488714
+  },
+  "stages": {
+    "browser-check": {
+      "status": "not-run",
+      "execution": "not-requested"
+    },
+    "validate": {
+      "status": "pass",
+      "exitCode": 0,
+      "durationMs": null,
+      "execution": "embedded-in-deliver",
+      "command": [
+        "C:\\Program Files\\nodejs\\node.exe",
+        "C:\\Users\\Sean\\.claude\\skills\\archify\\bin\\archify.mjs",
+        "deliver",
+        "explainer",
+        "E:\\private-projects\\중개메이트_사용자워크플로우\\.archify\\docs-junggae-mate-20261106-162526\\api.archify.md",
+        "E:\\private-projects\\중개메이트_사용자워크플로우\\.archify\\docs-junggae-mate-20261106-162526\\api.html",
+        "--quality",
+        "showcase",
+        "--repo-root",
+        "E:\\private-projects\\중개메이트_사용자워크플로우",
+        "--json"
+      ],
+      "receipt": {
+        "schemaVersion": 1,
+        "ok": true,
+        "command": "validate",
+        "specification": {
+          "sha256": "35f5a6a23b475b47209add1ce8d5bd63603256225de383c8fea6528ad00f7e58",
+          "bytes": 12201
+        },
+        "validation": {
+          "checksPassed": 4,
+          "checkCount": 4,
+          "compositionProfile": "showcase",
+          "compositionStatus": "pass",
+          "errors": 0,
+          "warnings": 0
+        }
+      }
+    },
+    "deliver": {
+      "status": "pass",
+      "exitCode": 0,
+      "durationMs": 4491,
+      "command": [
+        "C:\\Program Files\\nodejs\\node.exe",
+        "C:\\Users\\Sean\\.claude\\skills\\archify\\bin\\archify.mjs",
+        "deliver",
+        "explainer",
+        "E:\\private-projects\\중개메이트_사용자워크플로우\\.archify\\docs-junggae-mate-20261106-162526\\api.archify.md",
+        "E:\\private-projects\\중개메이트_사용자워크플로우\\.archify\\docs-junggae-mate-20261106-162526\\api.html",
+        "--quality",
+        "showcase",
+        "--repo-root",
+        "E:\\private-projects\\중개메이트_사용자워크플로우",
+        "--json"
+      ],
+      "receipt": {
+        "schemaVersion": 1,
+        "receiptId": "d8c6f0bc-3bed-4a8e-ad92-2622aa3b7baf",
+        "ok": true,
+        "command": "deliver",
+        "type": "explainer",
+        "input": "E:\\private-projects\\중개메이트_사용자워크플로우\\.archify\\docs-junggae-mate-20261106-162526\\api.archify.md",
+        "output": "E:\\private-projects\\중개메이트_사용자워크플로우\\.archify\\docs-junggae-mate-20261106-162526\\api.html",
+        "explainer": {
+          "preparedSha256": "7633ae2d65c7d7e2575038649ed75fa5b4eb02c86b345629ecc1e7b54696af99",
+          "dependencies": [
+            {
+              "kind": "repository",
+              "id": "auth-routes",
+              "path": "backend/app/api.py",
+              "revision": "ccc8778e03ff6f94b7cd92850e1b4cdf6a70c525",
+              "sha256": "63c864113f1a70f8e19cf4a74d118927e55bec61187a4c1f8bfc30792211acb2",
+              "bytes": 49269
+            },
+            {
+              "kind": "repository",
+              "id": "require-admin",
+              "path": "backend/app/security.py",
+              "revision": "ccc8778e03ff6f94b7cd92850e1b4cdf6a70c525",
+              "sha256": "c52b602ecc411ce1a5c9383017a0e6f12add8b192e440d93a73d9d6e431a924e",
+              "bytes": 2732
+            },
+            {
+              "kind": "repository",
+              "id": "own-listing",
+              "path": "backend/app/api.py",
+              "revision": "ccc8778e03ff6f94b7cd92850e1b4cdf6a70c525",
+              "sha256": "63c864113f1a70f8e19cf4a74d118927e55bec61187a4c1f8bfc30792211acb2",
+              "bytes": 49269
+            },
+            {
+              "kind": "repository",
+              "id": "search-in",
+              "path": "backend/app/api.py",
+              "revision": "ccc8778e03ff6f94b7cd92850e1b4cdf6a70c525",
+              "sha256": "63c864113f1a70f8e19cf4a74d118927e55bec61187a4c1f8bfc30792211acb2",
+              "bytes": 49269
+            },
+            {
+              "kind": "repository",
+              "id": "share-days",
+              "path": "backend/app/workflow.py",
+              "revision": "ccc8778e03ff6f94b7cd92850e1b4cdf6a70c525",
+              "sha256": "e35836c080635d7a3babfd54cfff6f3a81a6afadba7649d009669852d6002f70",
+              "bytes": 22884
+            }
+          ]
+        },
+        "specification": {
+          "sha256": "35f5a6a23b475b47209add1ce8d5bd63603256225de383c8fea6528ad00f7e58",
+          "bytes": 12201
+        },
+        "artifact": {
+          "sha256": "b341675b7c42b37fd87cc5db81580dc4b4ba8bac656cd0ae71309ab9dd9dc74b",
+          "bytes": 488714
+        },
+        "validation": {
+          "checksPassed": 4,
+          "checkCount": 4,
+          "compositionProfile": "showcase",
+          "compositionStatus": "pass",
+          "errors": 0,
+          "warnings": 0
+        },
+        "update": {
+          "status": "unavailable",
+          "installedVersion": null,
+          "availableVersion": null,
+          "releaseNotes": null,
+          "checkedAt": null,
+          "source": null,
+          "noticeRequired": false,
+          "noticeText": null,
+          "reason": "disabled"
+        }
+      }
+    },
+    "check": {
+      "status": "pass",
+      "exitCode": 0,
+      "durationMs": 1924,
+      "command": [
+        "C:\\Program Files\\nodejs\\node.exe",
+        "C:\\Users\\Sean\\.claude\\skills\\archify\\bin\\archify.mjs",
+        "check",
+        "E:\\private-projects\\중개메이트_사용자워크플로우\\.archify\\docs-junggae-mate-20261106-162526\\api.html",
+        "--require-provenance"
+      ],
+      "receipt": {
+        "ok": true,
+        "file": "E:\\private-projects\\중개메이트_사용자워크플로우\\.archify\\docs-junggae-mate-20261106-162526\\api.html",
+        "family": "explainer",
+        "artifact": {
+          "sha256": "b341675b7c42b37fd87cc5db81580dc4b4ba8bac656cd0ae71309ab9dd9dc74b",
+          "bytes": 488714
+        },
+        "checks": [
+          {
+            "name": "explainer_structure",
+            "ok": true,
+            "details": [
+              "107 unique DOM IDs"
+            ]
+          },
+          {
+            "name": "explainer_payload_identity",
+            "ok": true,
+            "details": []
+          },
+          {
+            "name": "explainer_dependencies",
+            "ok": true,
+            "details": [
+              "5 frozen dependencies"
+            ]
+          },
+          {
+            "name": "explainer_native_diagrams",
+            "ok": true,
+            "details": []
+          }
+        ],
+        "composition": {
+          "schemaVersion": 1,
+          "profile": "showcase",
+          "status": "pass",
+          "summary": {
+            "errors": 0,
+            "warnings": 0
+          },
+          "issues": [],
+          "nativeDiagrams": []
+        },
+        "diagnostics": [],
+        "provenance": "current",
+        "deliveryReceiptId": "d8c6f0bc-3bed-4a8e-ad92-2622aa3b7baf"
+      }
+    }
+  },
+  "browserCheck": {
+    "requested": false,
+    "ran": false
+  },
+  "diagnostics": [],
+  "evidence": {
+    "receipt": "E:\\private-projects\\중개메이트_사용자워크플로우\\.archify\\docs-junggae-mate-20261106-162526\\api.finalize.json",
+    "summaryReceipt": "E:\\private-projects\\중개메이트_사용자워크플로우\\.archify\\docs-junggae-mate-20261106-162526\\api.finalize-summary.json"
+  },
+  "visualReview": "not-requested",
+  "finishedAt": "2026-11-06T07:45:30.429Z",
+  "durationMs": 8246,
+  "update": {
+    "status": "unavailable",
+    "installedVersion": null,
+    "availableVersion": null,
+    "releaseNotes": null,
+    "checkedAt": null,
+    "source": null,
+    "noticeRequired": false,
+    "noticeText": null,
+    "reason": "timeout"
+  }
+}

@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "receiptId": "6957b3fc-169e-4d14-86c4-135bfab45756",
+  "status": "current",
+  "command": "deliver",
+  "type": "architecture",
+  "input": "E:\\private-projects\\중개메이트_사용자워크플로우\\.archify\\architecture-junggae-mate-v2-20261105-111215\\candidate.json",
+  "output": "E:\\private-projects\\중개메이트_사용자워크플로우\\.archify\\architecture-junggae-mate-v2-20261105-111215\\junggae-mate-system.html",
+  "specification": {
+    "sha256": "d188520bbf4fac5b0d7c828be5d850e615d483bf2aac45d475faf38785b06440",
+    "bytes": 10539
+  },
+  "artifact": {
+    "sha256": "8bb6f790ebf2e6ebe63f38d491fee07675aec8740f7dc59421a7cf5c28a5bb62",
+    "bytes": 883358
+  }
+}

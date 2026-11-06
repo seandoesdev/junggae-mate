@@ -1,0 +1,40 @@
+{
+  "schemaVersion": 1,
+  "ok": true,
+  "command": "finalize",
+  "status": "pass",
+  "type": "explainer",
+  "quality": "showcase",
+  "specification": {
+    "path": "E:\\private-projects\\중개메이트_사용자워크플로우\\.archify\\docs-junggae-mate-20261106-162526\\components.archify.md",
+    "sha256": "e71246fac01129f4e80f8e6b688c3aef300f91dbaf82ba2dfa55b4ef065ea6e0",
+    "bytes": 9234
+  },
+  "artifact": {
+    "path": "E:\\private-projects\\중개메이트_사용자워크플로우\\.archify\\docs-junggae-mate-20261106-162526\\components.html",
+    "sha256": "f3e7f84bf8c9ff678510349b5c7c5b4148c22278a97f075bb905126727fea491",
+    "bytes": 859388
+  },
+  "gates": {
+    "validate": "pass",
+    "deliver": "pass",
+    "check": "pass",
+    "browser-check": "not-run"
+  },
+  "diagnostics": [],
+  "diagnosticSummary": {
+    "total": 0,
+    "shown": 0,
+    "truncated": false
+  },
+  "evidence": {
+    "receipt": "E:\\private-projects\\중개메이트_사용자워크플로우\\.archify\\docs-junggae-mate-20261106-162526\\components.finalize.json",
+    "summaryReceipt": "E:\\private-projects\\중개메이트_사용자워크플로우\\.archify\\docs-junggae-mate-20261106-162526\\components.finalize-summary.json"
+  },
+  "visualReview": "not-requested",
+  "durationMs": 3543,
+  "browserCheck": {
+    "requested": false,
+    "ran": false
+  }
+}

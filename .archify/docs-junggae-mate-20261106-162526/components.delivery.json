@@ -1,0 +1,133 @@
+{
+  "schemaVersion": 1,
+  "receiptId": "109653f7-953a-409c-89a4-6ed5c7b5be7a",
+  "status": "current",
+  "command": "deliver",
+  "type": "explainer",
+  "input": "E:\\private-projects\\중개메이트_사용자워크플로우\\.archify\\docs-junggae-mate-20261106-162526\\components.archify.md",
+  "output": "E:\\private-projects\\중개메이트_사용자워크플로우\\.archify\\docs-junggae-mate-20261106-162526\\components.html",
+  "specification": {
+    "sha256": "e71246fac01129f4e80f8e6b688c3aef300f91dbaf82ba2dfa55b4ef065ea6e0",
+    "bytes": 9234
+  },
+  "artifact": {
+    "sha256": "f3e7f84bf8c9ff678510349b5c7c5b4148c22278a97f075bb905126727fea491",
+    "bytes": 859388
+  },
+  "explainer": {
+    "preparedSha256": "0feae1dfc46e0d53c13877f751be5372cba1c82953d23031bfedcb4908a0bb5a",
+    "dependencies": [
+      {
+        "kind": "repository",
+        "id": "pages-config",
+        "path": "frontend/functions/config.json.ts",
+        "revision": "ccc8778e03ff6f94b7cd92850e1b4cdf6a70c525",
+        "sha256": "e8c415b9d3dc6f95a3710a48704fe3cb34f45248ad1d2f260e7c85ea19da4760",
+        "bytes": 1133
+      },
+      {
+        "kind": "repository",
+        "id": "app-views",
+        "path": "frontend/src/App.tsx",
+        "revision": "ccc8778e03ff6f94b7cd92850e1b4cdf6a70c525",
+        "sha256": "285cbd124ba2b84bc6737effd30fdc9b0b919411bcc3a7a409ad46a1d7fe2007",
+        "bytes": 3418
+      },
+      {
+        "kind": "repository",
+        "id": "nginx-conf",
+        "path": "deploy/nginx/nginx.conf",
+        "revision": "ccc8778e03ff6f94b7cd92850e1b4cdf6a70c525",
+        "sha256": "897d88e9c875b0b5db97c3092f8f4a810a7acd77c48d473623ac85198e7e08bb",
+        "bytes": 3160
+      },
+      {
+        "kind": "repository",
+        "id": "acme-entry",
+        "path": "deploy/acme/entrypoint.sh",
+        "revision": "ccc8778e03ff6f94b7cd92850e1b4cdf6a70c525",
+        "sha256": "7cffa9d2735538798866f2dd2934e9e7f6a241187dc06a9d7aeff3785ccf3079",
+        "bytes": 5085
+      },
+      {
+        "kind": "repository",
+        "id": "main-cors",
+        "path": "backend/app/main.py",
+        "revision": "ccc8778e03ff6f94b7cd92850e1b4cdf6a70c525",
+        "sha256": "31ea79352ee25858809072248783181992eb66c5440f96cb72eb74b5182c01c3",
+        "bytes": 4693
+      },
+      {
+        "kind": "repository",
+        "id": "assistant-answer",
+        "path": "backend/app/assistant.py",
+        "revision": "ccc8778e03ff6f94b7cd92850e1b4cdf6a70c525",
+        "sha256": "8144284dee50bfc2abdb1bdb987d989ff36401eac98418deb81ace47aa7254a6",
+        "bytes": 37114
+      },
+      {
+        "kind": "repository",
+        "id": "hood-ask",
+        "path": "backend/app/hood.py",
+        "revision": "ccc8778e03ff6f94b7cd92850e1b4cdf6a70c525",
+        "sha256": "76a49996ebea1c09997917e317d1f1d46e34a94a3b07a978eb613c12099365f8",
+        "bytes": 12882
+      },
+      {
+        "kind": "repository",
+        "id": "rag-search",
+        "path": "backend/app/rag.py",
+        "revision": "ccc8778e03ff6f94b7cd92850e1b4cdf6a70c525",
+        "sha256": "b5da7b13603414e8814ec0b20985cba45374cc866ac5baa7071428728e99024a",
+        "bytes": 11319
+      },
+      {
+        "kind": "repository",
+        "id": "structured-facts",
+        "path": "backend/app/structured.py",
+        "revision": "ccc8778e03ff6f94b7cd92850e1b4cdf6a70c525",
+        "sha256": "ccc38840ffd77eb5a0c44f737681525cbf567e368b2cd4ecd69c026550466204",
+        "bytes": 20724
+      },
+      {
+        "kind": "repository",
+        "id": "workflow-stage",
+        "path": "backend/app/workflow.py",
+        "revision": "ccc8778e03ff6f94b7cd92850e1b4cdf6a70c525",
+        "sha256": "e35836c080635d7a3babfd54cfff6f3a81a6afadba7649d009669852d6002f70",
+        "bytes": 22884
+      },
+      {
+        "kind": "repository",
+        "id": "public-store",
+        "path": "backend/app/public_sources.py",
+        "revision": "ccc8778e03ff6f94b7cd92850e1b4cdf6a70c525",
+        "sha256": "94a4a55b220693d15fa22157166c7584a2989a3aeb115370c8aa9e6b86f52513",
+        "bytes": 19561
+      },
+      {
+        "kind": "repository",
+        "id": "schema",
+        "path": "backend/sql/schema.sql",
+        "revision": "ccc8778e03ff6f94b7cd92850e1b4cdf6a70c525",
+        "sha256": "e52fc777c43d2ed6072a68abf454aec2d843a92f979ec80bfe5a1efe940e24d1",
+        "bytes": 15961
+      },
+      {
+        "kind": "repository",
+        "id": "compose",
+        "path": "docker-compose.yml",
+        "revision": "ccc8778e03ff6f94b7cd92850e1b4cdf6a70c525",
+        "sha256": "1d5cea55b279495c7776967f98b5fd33968adf91eb2ee53a3f53568feb20fc0e",
+        "bytes": 3181
+      },
+      {
+        "kind": "diagram-spec",
+        "id": "component-map",
+        "inline": true,
+        "sha256": "ac0e3f8906154c41e1bff06fb0ae021a6780416b08ac77ea99edc9d2514dd3bc",
+        "bytes": 1450
+      }
+    ]
+  }
+}
