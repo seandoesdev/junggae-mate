@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>중개메이트 시스템 문서</title>
+<style>
+  :root { --bg:#f6f7f9; --panel:#fff; --ink:#14181f; --muted:#5b6472; --line:#dfe3e8; --accent:#0f766e; --accent-soft:#e6f4f2; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#0f1216; --panel:#161b22; --ink:#e8ecf1; --muted:#9aa4b2; --line:#2a313b; --accent:#2dd4bf; --accent-soft:#12302d; }
+  }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink);
+         font:15px/1.6 "Pretendard","Apple SD Gothic Neo","Malgun Gothic",system-ui,sans-serif; }
+  nav { position:sticky; top:0; display:flex; align-items:center; gap:20px; padding:0 20px; height:48px;
+        background:var(--panel); border-bottom:1px solid var(--line); overflow-x:auto; }
+  nav a { color:var(--muted); text-decoration:none; font-weight:600; white-space:nowrap; }
+  nav a:hover { color:var(--ink); }
+  nav .home { color:var(--accent); }
+  a:focus-visible { outline:2px solid var(--accent); outline-offset:2px; border-radius:4px; }
+  main { max-width:1120px; margin:0 auto; padding:40px 20px 64px; }
+  h1 { margin:0 0 8px; font-size:26px; letter-spacing:-.01em; }
+  .lead { margin:0 0 6px; color:var(--muted); max-width:72ch; }
+  .meta { margin:0 0 32px; color:var(--muted); font-size:13px; }
+  .grid { display:grid; grid-template-columns:repeat(2, minmax(0,1fr)); gap:16px; }
+  @media (max-width: 760px) { .grid { grid-template-columns:1fr; } }
+  .card { display:flex; flex-direction:column; gap:10px; padding:20px 22px; background:var(--panel);
+          border:1px solid var(--line); border-radius:12px; }
+  .card h2 { margin:0; font-size:18px; }
+  .card h2 a { color:var(--ink); text-decoration:none; }
+  .card h2 a:hover { color:var(--accent); }
+  .card h2 span { margin-left:8px; color:var(--muted); font-size:13px; font-weight:400; }
+  .card p { margin:0; color:var(--muted); font-size:14px; }
+  .links { display:flex; flex-wrap:wrap; gap:6px; margin-top:auto; padding-top:6px; }
+  .links a { padding:3px 10px; border:1px solid var(--line); border-radius:999px; color:var(--muted);
+             text-decoration:none; font-size:13px; }
+  .links a:hover { color:var(--accent); border-color:var(--accent); background:var(--accent-soft); }
+  .open { align-self:flex-start; color:var(--accent); font-weight:600; text-decoration:none; font-size:14px; }
+  .open:hover { text-decoration:underline; }
+</style>
+</head>
+<body>
+<nav aria-label="중개메이트 시스템 문서">
+  <a class="home" href="index.html" aria-current="page">중개메이트 문서</a>
+  <a href="system.html">시스템 구조</a>
+  <a href="components.html">컴포넌트 역할</a>
+  <a href="api.html">API</a>
+  <a href="rag.html">RAG 설계</a>
+</nav>
+<main>
+  <h1>중개메이트 시스템 문서</h1>
+  <p class="lead">Cloudflare Pages의 React 화면과 nginx 뒤 FastAPI 서버, PostgreSQL 하나로 동작하는 중개메이트의 구조, API, Hood AI의 RAG 설계를 정리했습니다.</p>
+  <p class="meta">기준 코드: feature/ip-cert · ccc8778 · 모든 문서는 이 폴더의 상대경로로 연결됩니다.</p>
+
+  <div class="grid">
+    <section class="card">
+      <h2><a href="system.html">시스템 구조</a><span>다이어그램</span></h2>
+      <p>화면 → nginx 443 → FastAPI → Hood AI·거래·수집 → PostgreSQL 흐름과 인증서 발급 경로를 한 장에 그렸습니다. 상자를 누르면 해당 코드 줄로 이동합니다.</p>
+      <a class="open" href="system.html">구조도 열기 →</a>
+    </section>
+
+    <section class="card">
+      <h2><a href="components.html">컴포넌트 역할</a><span>5개 묶음</span></h2>
+      <p>각 구성 요소가 무엇을 맡는지 표로 정리했습니다.</p>
+      <div class="links">
+        <a href="components.html#request-path">요청 순서</a>
+        <a href="components.html#frontend-roles">화면·배포</a>
+        <a href="components.html#edge-roles">서버 앞단</a>
+        <a href="components.html#backend-roles">백엔드 모듈</a>
+        <a href="components.html#data-roles">데이터·외부</a>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2><a href="api.html">API</a><span>59개 + API 밖 경로 4개</span></h2>
+      <p>분류별로 경로, 권한(공개·로그인·담당·관리자), 하는 일을 정리했습니다.</p>
+      <div class="links">
+        <a href="api.html#api-overview">한눈에</a>
+        <a href="api.html#api-auth">인증·사용자 4</a>
+        <a href="api.html#api-listings">매물 11</a>
+        <a href="api.html#api-customers">고객 6</a>
+        <a href="api.html#api-deals">거래 4</a>
+        <a href="api.html#api-reports">보고서 8</a>
+        <a href="api.html#api-hood">Hood AI 7</a>
+        <a href="api.html#api-library">자료실·근거 5</a>
+        <a href="api.html#api-admin">관리자·수집 9</a>
+        <a href="api.html#api-public-data">공공데이터 조회 4</a>
+        <a href="api.html#api-system">상태·API 밖 경로 1+4</a>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2><a href="rag.html">RAG 설계</a><span>Hood AI</span></h2>
+      <p>공공데이터·매물은 SQL로, 법령·정책·사무소 자료·기사는 하이브리드 검색으로 찾고 근거 게이트로 걸러 답하는 구조입니다.</p>
+      <div class="links">
+        <a href="rag.html#ingest-pipeline">수집 파이프라인</a>
+        <a href="rag.html#data-sources">사용 데이터</a>
+        <a href="rag.html#chunking">청킹·임베딩</a>
+        <a href="rag.html#query-flow">질문 처리 순서</a>
+        <a href="rag.html#ranking">순위</a>
+        <a href="rag.html#evidence-gate">근거 게이트</a>
+        <a href="rag.html#llm-role">Claude 역할</a>
+        <a href="rag.html#tracing">추적</a>
+      </div>
+    </section>
+  </div>
+</main>
+</body>
+</html>

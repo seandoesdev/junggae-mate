@@ -1,0 +1,68 @@
+{
+  "schemaVersion": 1,
+  "ok": false,
+  "command": "browser-check",
+  "evidenceKind": "automated-browser",
+  "status": "fail",
+  "visualReview": "not-requested",
+  "provenance": "current",
+  "deliveryReceiptId": "e0f53cb8-e07c-456a-b9af-9390dcfca68d",
+  "artifact": {
+    "path": "E:\\private-projects\\중개메이트_사용자워크플로우\\.archify\\docs-junggae-mate-20261106-162526\\system.html",
+    "sha256": "8bb6f790ebf2e6ebe63f38d491fee07675aec8740f7dc59421a7cf5c28a5bb62",
+    "bytes": 883358
+  },
+  "state": {
+    "detail": "read",
+    "motion": "still"
+  },
+  "chrome": {
+    "status": "available",
+    "executable": "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe"
+  },
+  "diagnostics": [
+    {
+      "code": "viewer/temp-cleanup-incomplete",
+      "severity": "error",
+      "message": "Browser cleanup could not safely finish; inspect the reported retained path.",
+      "subject": {
+        "artifact": "E:\\private-projects\\중개메이트_사용자워크플로우\\.archify\\docs-junggae-mate-20261106-162526\\system.html"
+      },
+      "evidence": {
+        "reason": "Chrome did not exit; retained temporary profile \"C:\\Users\\Sean\\AppData\\Local\\Temp\\archify-visual-check-profile-7885Iy\".",
+        "retainedDirectory": "C:\\Users\\Sean\\AppData\\Local\\Temp\\archify-visual-check-profile-7885Iy"
+      },
+      "supportedFixes": [
+        "resolve the reported process or filesystem failure; verify directory ownership before manual cleanup"
+      ]
+    }
+  ],
+  "containment": {
+    "status": "fail",
+    "policy": "fit-or-reader-declared-readable-vertical-scroll",
+    "viewports": []
+  },
+  "themeStates": {
+    "status": "fail",
+    "viewports": []
+  },
+  "readability": {
+    "status": "fail",
+    "minimumProjectedNodeTextPx": 6,
+    "viewports": []
+  },
+  "viewerChrome": {
+    "status": "fail",
+    "viewports": []
+  },
+  "captures": {
+    "status": "not-requested",
+    "screenshots": [],
+    "contactSheet": null
+  },
+  "sidecars": {
+    "receipt": "system.browser-check.json",
+    "files": []
+  },
+  "error": "Chrome did not exit; retained temporary profile \"C:\\Users\\Sean\\AppData\\Local\\Temp\\archify-visual-check-profile-7885Iy\"."
+}

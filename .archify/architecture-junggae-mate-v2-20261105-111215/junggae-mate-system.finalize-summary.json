@@ -1,0 +1,51 @@
+{
+  "schemaVersion": 1,
+  "ok": true,
+  "command": "finalize",
+  "status": "pass",
+  "type": "architecture",
+  "quality": "showcase",
+  "specification": {
+    "path": "E:\\private-projects\\중개메이트_사용자워크플로우\\.archify\\architecture-junggae-mate-v2-20261105-111215\\candidate.json",
+    "sha256": "d188520bbf4fac5b0d7c828be5d850e615d483bf2aac45d475faf38785b06440",
+    "bytes": 10539
+  },
+  "artifact": {
+    "path": "E:\\private-projects\\중개메이트_사용자워크플로우\\.archify\\architecture-junggae-mate-v2-20261105-111215\\junggae-mate-system.html",
+    "sha256": "8bb6f790ebf2e6ebe63f38d491fee07675aec8740f7dc59421a7cf5c28a5bb62",
+    "bytes": 883358
+  },
+  "gates": {
+    "validate": "pass",
+    "deliver": "pass",
+    "check": "pass",
+    "browser-check": "pass"
+  },
+  "diagnostics": [],
+  "diagnosticSummary": {
+    "total": 0,
+    "shown": 0,
+    "truncated": false
+  },
+  "evidence": {
+    "receipt": "E:\\private-projects\\중개메이트_사용자워크플로우\\.archify\\architecture-junggae-mate-v2-20261105-111215\\junggae-mate-system.finalize.json",
+    "summaryReceipt": "E:\\private-projects\\중개메이트_사용자워크플로우\\.archify\\architecture-junggae-mate-v2-20261105-111215\\junggae-mate-system.finalize-summary.json",
+    "browserCheckReceipt": "E:\\private-projects\\중개메이트_사용자워크플로우\\.archify\\architecture-junggae-mate-v2-20261105-111215\\junggae-mate-system.browser-check.json"
+  },
+  "update": {
+    "status": "current",
+    "installedVersion": "3.2.0",
+    "availableVersion": "3.2.0",
+    "releaseNotes": null,
+    "checkedAt": "2026-11-04T00:51:12.229Z",
+    "source": "cache",
+    "noticeRequired": false,
+    "noticeText": null
+  },
+  "visualReview": "not-requested",
+  "durationMs": 8334,
+  "browserCheck": {
+    "requested": true,
+    "ran": true
+  }
+}

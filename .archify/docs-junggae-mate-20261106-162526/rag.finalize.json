@@ -1,0 +1,620 @@
+{
+  "schemaVersion": 1,
+  "ok": true,
+  "command": "finalize",
+  "status": "pass",
+  "type": "explainer",
+  "quality": "showcase",
+  "startedAt": "2026-11-06T07:50:45.481Z",
+  "specification": {
+    "path": "E:\\private-projects\\중개메이트_사용자워크플로우\\.archify\\docs-junggae-mate-20261106-162526\\rag.archify.md",
+    "sha256": "1f27b73420eae81832c1b5cce2cf67232acd6957b66492feb997fe71b12cf237",
+    "bytes": 16368
+  },
+  "artifact": {
+    "path": "E:\\private-projects\\중개메이트_사용자워크플로우\\.archify\\docs-junggae-mate-20261106-162526\\rag.html",
+    "sha256": "fb0f966f561db5533dda1897cb54973ea1fcec9db67b9a131205aac220220037",
+    "bytes": 1582580
+  },
+  "stages": {
+    "browser-check": {
+      "status": "not-run",
+      "execution": "not-requested"
+    },
+    "validate": {
+      "status": "pass",
+      "exitCode": 0,
+      "durationMs": null,
+      "execution": "embedded-in-deliver",
+      "command": [
+        "C:\\Program Files\\nodejs\\node.exe",
+        "C:\\Users\\Sean\\.claude\\skills\\archify\\bin\\archify.mjs",
+        "deliver",
+        "explainer",
+        "E:\\private-projects\\중개메이트_사용자워크플로우\\.archify\\docs-junggae-mate-20261106-162526\\rag.archify.md",
+        "E:\\private-projects\\중개메이트_사용자워크플로우\\.archify\\docs-junggae-mate-20261106-162526\\rag.html",
+        "--quality",
+        "showcase",
+        "--repo-root",
+        "E:\\private-projects\\중개메이트_사용자워크플로우",
+        "--json"
+      ],
+      "receipt": {
+        "schemaVersion": 1,
+        "ok": true,
+        "command": "validate",
+        "specification": {
+          "sha256": "1f27b73420eae81832c1b5cce2cf67232acd6957b66492feb997fe71b12cf237",
+          "bytes": 16368
+        },
+        "validation": {
+          "checksPassed": 4,
+          "checkCount": 4,
+          "compositionProfile": "showcase",
+          "compositionStatus": "pass",
+          "errors": 0,
+          "warnings": 0
+        }
+      }
+    },
+    "deliver": {
+      "status": "pass",
+      "exitCode": 0,
+      "durationMs": 3251,
+      "command": [
+        "C:\\Program Files\\nodejs\\node.exe",
+        "C:\\Users\\Sean\\.claude\\skills\\archify\\bin\\archify.mjs",
+        "deliver",
+        "explainer",
+        "E:\\private-projects\\중개메이트_사용자워크플로우\\.archify\\docs-junggae-mate-20261106-162526\\rag.archify.md",
+        "E:\\private-projects\\중개메이트_사용자워크플로우\\.archify\\docs-junggae-mate-20261106-162526\\rag.html",
+        "--quality",
+        "showcase",
+        "--repo-root",
+        "E:\\private-projects\\중개메이트_사용자워크플로우",
+        "--json"
+      ],
+      "receipt": {
+        "schemaVersion": 1,
+        "receiptId": "63a79e52-6db2-48f5-af69-f57352aa4e70",
+        "ok": true,
+        "command": "deliver",
+        "type": "explainer",
+        "input": "E:\\private-projects\\중개메이트_사용자워크플로우\\.archify\\docs-junggae-mate-20261106-162526\\rag.archify.md",
+        "output": "E:\\private-projects\\중개메이트_사용자워크플로우\\.archify\\docs-junggae-mate-20261106-162526\\rag.html",
+        "explainer": {
+          "preparedSha256": "844e2998879fcd4461f7c0cbbc1f4e0bff013af70bcd0c79846b28fa1e162df3",
+          "dependencies": [
+            {
+              "kind": "repository",
+              "id": "public-store",
+              "path": "backend/app/public_sources.py",
+              "revision": "ccc8778e03ff6f94b7cd92850e1b4cdf6a70c525",
+              "sha256": "94a4a55b220693d15fa22157166c7584a2989a3aeb115370c8aa9e6b86f52513",
+              "bytes": 19561
+            },
+            {
+              "kind": "repository",
+              "id": "upload",
+              "path": "backend/app/api.py",
+              "revision": "ccc8778e03ff6f94b7cd92850e1b4cdf6a70c525",
+              "sha256": "63c864113f1a70f8e19cf4a74d118927e55bec61187a4c1f8bfc30792211acb2",
+              "bytes": 49269
+            },
+            {
+              "kind": "repository",
+              "id": "ingest",
+              "path": "backend/app/rag.py",
+              "revision": "ccc8778e03ff6f94b7cd92850e1b4cdf6a70c525",
+              "sha256": "b5da7b13603414e8814ec0b20985cba45374cc866ac5baa7071428728e99024a",
+              "bytes": 11319
+            },
+            {
+              "kind": "repository",
+              "id": "chunk-limits",
+              "path": "backend/app/chunking.py",
+              "revision": "ccc8778e03ff6f94b7cd92850e1b4cdf6a70c525",
+              "sha256": "8d6a1321a1514eb919c04a257acd6de7a868283e43fe5f94b48b178a648398e8",
+              "bytes": 3088
+            },
+            {
+              "kind": "repository",
+              "id": "chunk-doc",
+              "path": "backend/app/chunking.py",
+              "revision": "ccc8778e03ff6f94b7cd92850e1b4cdf6a70c525",
+              "sha256": "8d6a1321a1514eb919c04a257acd6de7a868283e43fe5f94b48b178a648398e8",
+              "bytes": 3088
+            },
+            {
+              "kind": "repository",
+              "id": "embed",
+              "path": "backend/app/embedding.py",
+              "revision": "ccc8778e03ff6f94b7cd92850e1b4cdf6a70c525",
+              "sha256": "4fa97ed072b5785c3519a513fdb109711c281e3f356d779c4daa7c85280fd9a7",
+              "bytes": 1121
+            },
+            {
+              "kind": "repository",
+              "id": "rag-search",
+              "path": "backend/app/rag.py",
+              "revision": "ccc8778e03ff6f94b7cd92850e1b4cdf6a70c525",
+              "sha256": "b5da7b13603414e8814ec0b20985cba45374cc866ac5baa7071428728e99024a",
+              "bytes": 11319
+            },
+            {
+              "kind": "repository",
+              "id": "gate",
+              "path": "backend/app/rag.py",
+              "revision": "ccc8778e03ff6f94b7cd92850e1b4cdf6a70c525",
+              "sha256": "b5da7b13603414e8814ec0b20985cba45374cc866ac5baa7071428728e99024a",
+              "bytes": 11319
+            },
+            {
+              "kind": "repository",
+              "id": "routing",
+              "path": "backend/app/assistant.py",
+              "revision": "ccc8778e03ff6f94b7cd92850e1b4cdf6a70c525",
+              "sha256": "8144284dee50bfc2abdb1bdb987d989ff36401eac98418deb81ace47aa7254a6",
+              "bytes": 37114
+            },
+            {
+              "kind": "repository",
+              "id": "answer",
+              "path": "backend/app/assistant.py",
+              "revision": "ccc8778e03ff6f94b7cd92850e1b4cdf6a70c525",
+              "sha256": "8144284dee50bfc2abdb1bdb987d989ff36401eac98418deb81ace47aa7254a6",
+              "bytes": 37114
+            },
+            {
+              "kind": "repository",
+              "id": "stale",
+              "path": "backend/app/structured.py",
+              "revision": "ccc8778e03ff6f94b7cd92850e1b4cdf6a70c525",
+              "sha256": "ccc38840ffd77eb5a0c44f737681525cbf567e368b2cd4ecd69c026550466204",
+              "bytes": 20724
+            },
+            {
+              "kind": "repository",
+              "id": "candidates",
+              "path": "backend/app/structured.py",
+              "revision": "ccc8778e03ff6f94b7cd92850e1b4cdf6a70c525",
+              "sha256": "ccc38840ffd77eb5a0c44f737681525cbf567e368b2cd4ecd69c026550466204",
+              "bytes": 20724
+            },
+            {
+              "kind": "repository",
+              "id": "trade-ref",
+              "path": "backend/app/drafting.py",
+              "revision": "ccc8778e03ff6f94b7cd92850e1b4cdf6a70c525",
+              "sha256": "cb2c77101df011e5c49d678a62fe806a1aeb7c26f40cc862308d7325193ed1d9",
+              "bytes": 22218
+            },
+            {
+              "kind": "repository",
+              "id": "verify-citations",
+              "path": "backend/app/drafting.py",
+              "revision": "ccc8778e03ff6f94b7cd92850e1b4cdf6a70c525",
+              "sha256": "cb2c77101df011e5c49d678a62fe806a1aeb7c26f40cc862308d7325193ed1d9",
+              "bytes": 22218
+            },
+            {
+              "kind": "repository",
+              "id": "llm-rules",
+              "path": "backend/app/llm.py",
+              "revision": "ccc8778e03ff6f94b7cd92850e1b4cdf6a70c525",
+              "sha256": "0b3183b2a68c375407b2560163c76703486a2e301fcb6e8614ce3839571303da",
+              "bytes": 3855
+            },
+            {
+              "kind": "repository",
+              "id": "trace",
+              "path": "backend/app/hood.py",
+              "revision": "ccc8778e03ff6f94b7cd92850e1b4cdf6a70c525",
+              "sha256": "76a49996ebea1c09997917e317d1f1d46e34a94a3b07a978eb613c12099365f8",
+              "bytes": 12882
+            },
+            {
+              "kind": "repository",
+              "id": "schema-docs",
+              "path": "backend/sql/schema.sql",
+              "revision": "ccc8778e03ff6f94b7cd92850e1b4cdf6a70c525",
+              "sha256": "e52fc777c43d2ed6072a68abf454aec2d843a92f979ec80bfe5a1efe940e24d1",
+              "bytes": 15961
+            },
+            {
+              "kind": "repository",
+              "id": "seed-docs",
+              "path": "backend/app/seed.py",
+              "revision": "ccc8778e03ff6f94b7cd92850e1b4cdf6a70c525",
+              "sha256": "49c17b0a6165d7146dcbf6d7c1fcf8b2b5a1c498ab115a83bba660c2281503c5",
+              "bytes": 23945
+            },
+            {
+              "kind": "diagram-spec",
+              "id": "ingest-flow",
+              "inline": true,
+              "sha256": "28b7f1fdea8a060182f94430015062e6f52922b148e5941d400df84120fcc2f5",
+              "bytes": 2135
+            },
+            {
+              "kind": "diagram-spec",
+              "id": "answer-flow",
+              "inline": true,
+              "sha256": "7d31432ea7219212818dd44d71095da00717395010887b3a16b9096ff5359f83",
+              "bytes": 1914
+            }
+          ]
+        },
+        "specification": {
+          "sha256": "1f27b73420eae81832c1b5cce2cf67232acd6957b66492feb997fe71b12cf237",
+          "bytes": 16368
+        },
+        "artifact": {
+          "sha256": "fb0f966f561db5533dda1897cb54973ea1fcec9db67b9a131205aac220220037",
+          "bytes": 1582580
+        },
+        "validation": {
+          "checksPassed": 4,
+          "checkCount": 4,
+          "compositionProfile": "showcase",
+          "compositionStatus": "pass",
+          "errors": 0,
+          "warnings": 0
+        },
+        "update": {
+          "status": "unavailable",
+          "installedVersion": null,
+          "availableVersion": null,
+          "releaseNotes": null,
+          "checkedAt": null,
+          "source": null,
+          "noticeRequired": false,
+          "noticeText": null,
+          "reason": "disabled"
+        }
+      }
+    },
+    "check": {
+      "status": "pass",
+      "exitCode": 0,
+      "durationMs": 1645,
+      "command": [
+        "C:\\Program Files\\nodejs\\node.exe",
+        "C:\\Users\\Sean\\.claude\\skills\\archify\\bin\\archify.mjs",
+        "check",
+        "E:\\private-projects\\중개메이트_사용자워크플로우\\.archify\\docs-junggae-mate-20261106-162526\\rag.html",
+        "--require-provenance"
+      ],
+      "receipt": {
+        "ok": true,
+        "file": "E:\\private-projects\\중개메이트_사용자워크플로우\\.archify\\docs-junggae-mate-20261106-162526\\rag.html",
+        "family": "explainer",
+        "artifact": {
+          "sha256": "fb0f966f561db5533dda1897cb54973ea1fcec9db67b9a131205aac220220037",
+          "bytes": 1582580
+        },
+        "checks": [
+          {
+            "name": "explainer_structure",
+            "ok": true,
+            "details": [
+              "137 unique DOM IDs"
+            ]
+          },
+          {
+            "name": "explainer_payload_identity",
+            "ok": true,
+            "details": []
+          },
+          {
+            "name": "explainer_dependencies",
+            "ok": true,
+            "details": [
+              "20 frozen dependencies"
+            ]
+          },
+          {
+            "name": "explainer_native_diagrams",
+            "ok": true,
+            "details": [
+              "ingest-flow: pass",
+              "answer-flow: pass"
+            ]
+          }
+        ],
+        "composition": {
+          "schemaVersion": 1,
+          "profile": "showcase",
+          "status": "pass",
+          "summary": {
+            "errors": 0,
+            "warnings": 0
+          },
+          "issues": [],
+          "nativeDiagrams": [
+            {
+              "id": "ingest-flow",
+              "receipt": {
+                "ok": true,
+                "file": "C:\\Users\\Sean\\AppData\\Local\\Temp\\archify-explainer-check-SxehBU\\child.html",
+                "artifact": {
+                  "sha256": "5d4a6904a1bf0e8f3ff4b1ac300365987277963db116eee7b2ef8aa24eaa4ebf",
+                  "bytes": 846077
+                },
+                "checks": [
+                  {
+                    "name": "single_svg",
+                    "ok": true,
+                    "details": [
+                      "found 1 <svg> block(s)"
+                    ]
+                  },
+                  {
+                    "name": "finite_svg",
+                    "ok": true,
+                    "details": []
+                  },
+                  {
+                    "name": "orthogonal_arrows",
+                    "ok": true,
+                    "details": []
+                  },
+                  {
+                    "name": "label_route_clearance",
+                    "ok": true,
+                    "details": []
+                  },
+                  {
+                    "name": "relationship_crossings",
+                    "ok": true,
+                    "details": []
+                  },
+                  {
+                    "name": "relationship_corridors",
+                    "ok": true,
+                    "details": []
+                  },
+                  {
+                    "name": "container_border_runs",
+                    "ok": true,
+                    "details": []
+                  },
+                  {
+                    "name": "route_rhythm",
+                    "ok": true,
+                    "details": []
+                  },
+                  {
+                    "name": "legend_clearance",
+                    "ok": true,
+                    "details": []
+                  }
+                ],
+                "composition": {
+                  "schemaVersion": 1,
+                  "profile": "showcase",
+                  "status": "pass",
+                  "summary": {
+                    "errors": 0,
+                    "warnings": 0
+                  },
+                  "metrics": {
+                    "properCrossings": 0,
+                    "resolvedCrossovers": 0,
+                    "ambiguousCorridors": 0,
+                    "arrowheadCollisions": 0,
+                    "containerBorderRuns": 0,
+                    "labelRouteClearanceIssues": 0,
+                    "labelCanvasOverflowIssues": 0,
+                    "minLabelRouteClearance": 96.2,
+                    "desktopReadabilityIssues": 0,
+                    "viewportHeightIssues": 0,
+                    "minProjectedNodeTextPx": 7.30844793713163,
+                    "maxBends": 0,
+                    "routesOverSuggestedBends": 0,
+                    "maxStretch": 1,
+                    "routesOverSuggestedStretch": 0,
+                    "minSegmentPx": 38,
+                    "minInteriorSegmentPx": null,
+                    "shortSegmentCount": 0,
+                    "shortEndpointSegmentCount": 0,
+                    "shortInteriorSegmentCount": 0,
+                    "microSegmentCount": 0
+                  },
+                  "suggestedLimits": {
+                    "bendsPerRelationship": 2,
+                    "stretch": 1.35,
+                    "segmentPx": 16,
+                    "microSegmentPx": 8
+                  },
+                  "routeReview": {
+                    "crossings": [],
+                    "detours": []
+                  },
+                  "leadingSpace": {
+                    "measured": false,
+                    "reviewSuggested": false
+                  },
+                  "desktopReadability": {
+                    "budgetBasis": "legacy-930",
+                    "readerContract": "declared-wide-v1",
+                    "availableDiagramWidth": 930,
+                    "actualBudgetPx": 930,
+                    "limit": "legacy",
+                    "requestedTargetPx": null,
+                    "requestedTargetMet": null,
+                    "hardFloorPx": 6,
+                    "hardFloorMet": true,
+                    "minimumOwner": {
+                      "kind": "edge",
+                      "id": "collect-to-portal-1",
+                      "from": "collect",
+                      "to": "portal"
+                    },
+                    "minimumSourceTextPx": 8,
+                    "minimumProjectedTextPx": 7.30844793713163,
+                    "semanticTextCount": 20
+                  },
+                  "issues": []
+                }
+              }
+            },
+            {
+              "id": "answer-flow",
+              "receipt": {
+                "ok": true,
+                "file": "C:\\Users\\Sean\\AppData\\Local\\Temp\\archify-explainer-check-BVGb6H\\child.html",
+                "artifact": {
+                  "sha256": "54a7672f59ae3bae1c01a9c1b804fccae4e615d5f6c50cd7c87355b3a40a6f3a",
+                  "bytes": 844531
+                },
+                "checks": [
+                  {
+                    "name": "single_svg",
+                    "ok": true,
+                    "details": [
+                      "found 1 <svg> block(s)"
+                    ]
+                  },
+                  {
+                    "name": "finite_svg",
+                    "ok": true,
+                    "details": []
+                  },
+                  {
+                    "name": "orthogonal_arrows",
+                    "ok": true,
+                    "details": []
+                  },
+                  {
+                    "name": "label_route_clearance",
+                    "ok": true,
+                    "details": []
+                  },
+                  {
+                    "name": "relationship_crossings",
+                    "ok": true,
+                    "details": []
+                  },
+                  {
+                    "name": "relationship_corridors",
+                    "ok": true,
+                    "details": []
+                  },
+                  {
+                    "name": "container_border_runs",
+                    "ok": true,
+                    "details": []
+                  },
+                  {
+                    "name": "route_rhythm",
+                    "ok": true,
+                    "details": []
+                  },
+                  {
+                    "name": "legend_clearance",
+                    "ok": true,
+                    "details": []
+                  }
+                ],
+                "composition": {
+                  "schemaVersion": 1,
+                  "profile": "showcase",
+                  "status": "pass",
+                  "summary": {
+                    "errors": 0,
+                    "warnings": 0
+                  },
+                  "metrics": {
+                    "properCrossings": 0,
+                    "resolvedCrossovers": 0,
+                    "ambiguousCorridors": 0,
+                    "arrowheadCollisions": 0,
+                    "containerBorderRuns": 0,
+                    "labelRouteClearanceIssues": 0,
+                    "labelCanvasOverflowIssues": 0,
+                    "minLabelRouteClearance": 27,
+                    "desktopReadabilityIssues": 0,
+                    "viewportHeightIssues": 0,
+                    "minProjectedNodeTextPx": 8,
+                    "maxBends": 0,
+                    "routesOverSuggestedBends": 0,
+                    "maxStretch": 1,
+                    "routesOverSuggestedStretch": 0,
+                    "minSegmentPx": 8,
+                    "minInteriorSegmentPx": null,
+                    "shortSegmentCount": 3,
+                    "shortEndpointSegmentCount": 3,
+                    "shortInteriorSegmentCount": 0,
+                    "microSegmentCount": 0
+                  },
+                  "suggestedLimits": {
+                    "bendsPerRelationship": 2,
+                    "stretch": 1.35,
+                    "segmentPx": 16,
+                    "microSegmentPx": 8
+                  },
+                  "routeReview": {
+                    "crossings": [],
+                    "detours": []
+                  },
+                  "leadingSpace": {
+                    "measured": false,
+                    "reviewSuggested": false
+                  },
+                  "desktopReadability": {
+                    "budgetBasis": "legacy-930",
+                    "readerContract": "declared-wide-v1",
+                    "availableDiagramWidth": 930,
+                    "actualBudgetPx": 930,
+                    "limit": "legacy",
+                    "requestedTargetPx": null,
+                    "requestedTargetMet": null,
+                    "hardFloorPx": 6,
+                    "hardFloorMet": true,
+                    "minimumOwner": {
+                      "kind": "edge",
+                      "id": "ask-to-parse-1",
+                      "from": "ask",
+                      "to": "parse"
+                    },
+                    "minimumSourceTextPx": 8,
+                    "minimumProjectedTextPx": 8,
+                    "semanticTextCount": 18
+                  },
+                  "issues": []
+                }
+              }
+            }
+          ]
+        },
+        "diagnostics": [],
+        "provenance": "current",
+        "deliveryReceiptId": "63a79e52-6db2-48f5-af69-f57352aa4e70"
+      }
+    }
+  },
+  "browserCheck": {
+    "requested": false,
+    "ran": false
+  },
+  "diagnostics": [],
+  "evidence": {
+    "receipt": "E:\\private-projects\\중개메이트_사용자워크플로우\\.archify\\docs-junggae-mate-20261106-162526\\rag.finalize.json",
+    "summaryReceipt": "E:\\private-projects\\중개메이트_사용자워크플로우\\.archify\\docs-junggae-mate-20261106-162526\\rag.finalize-summary.json"
+  },
+  "visualReview": "not-requested",
+  "finishedAt": "2026-11-06T07:50:51.118Z",
+  "durationMs": 5636,
+  "update": {
+    "status": "unavailable",
+    "installedVersion": null,
+    "availableVersion": null,
+    "releaseNotes": null,
+    "checkedAt": null,
+    "source": null,
+    "noticeRequired": false,
+    "noticeText": null,
+    "reason": "timeout"
+  }
+}
