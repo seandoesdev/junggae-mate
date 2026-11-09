@@ -29,6 +29,9 @@ class Settings:
     cors_origin_regex: str | None = os.getenv("CORS_ORIGIN_REGEX") or None
     # 고객 공유 링크(/r/{token})에 쓸 API 서버의 공개 주소. 비우면 요청 주소를 쓴다 (프록시 뒤라면 https 주소를 적는다)
     public_base_url: str = os.getenv("PUBLIC_BASE_URL", "").rstrip("/")
+    # 네이버 클라우드 Maps 애플리케이션의 Client ID. 화면의 지도 스크립트(ncpKeyId)에 그대로 실리는 공개 값이다.
+    # 짝인 NAVER_CLIENT_SECRET은 서버 전용 REST API(지오코딩 등)용이라 화면에 내보내지 않는다
+    naver_client_id: str = os.getenv("NAVER_CLIENT_ID", "").strip()
 
 
 settings = Settings()

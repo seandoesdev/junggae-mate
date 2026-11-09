@@ -41,7 +41,19 @@ python scripts/smoke_public_data_live.py
 - VWorld 지도·공간정보(`15058805`): VWorld 개발자센터의 `VWORLD_API_KEY`와 신청 시 등록한 `VWORLD_API_DOMAIN`을 함께 입력
 - 도로명주소 검색·좌표: 도로명주소 개발자센터에서 발급받은 `JUSO_API_KEY` 입력
 
-현재 기본 지도(OpenStreetMap)와 핵심 매물 업무는 이 별도 설정이 없어도 동작합니다.
+핵심 매물 업무는 이 별도 설정이 없어도 동작합니다.
+
+### 지도: 네이버 지도 (없으면 OpenStreetMap)
+
+지도는 네이버 클라우드 플랫폼의 **Maps(Dynamic Map)**로 그립니다.
+
+1. 네이버 클라우드 콘솔 > AI·NAVER API(또는 Maps) > Application에서 앱을 만들고 **Dynamic Map**을 선택합니다.
+2. **Web 서비스 URL**에 화면 주소를 모두 등록합니다. 예: `https://junggae-mate.kro.kr`, `https://junggae-mate.pages.dev`, 개발용 `http://localhost:5173`, 서버가 화면을 함께 내려줄 때 `http://localhost:8000`
+3. 서버 `.env`에 `NAVER_CLIENT_ID`(필수)와 `NAVER_CLIENT_SECRET`을 넣고 app 컨테이너를 다시 시작합니다.
+
+- 화면은 Client ID만 `/api/public-config`에서 받아 지도 스크립트(`ncpKeyId`)에 씁니다. Client ID는 원래 브라우저에 보이는 공개 값입니다.
+- `NAVER_CLIENT_SECRET`은 지오코딩 같은 서버 전용 REST API용입니다. 화면에 내보내지 않고, 지금 지도 표시에는 쓰지 않습니다.
+- Client ID가 없거나 인증이 실패하면(등록하지 않은 화면 주소 등) 지도는 자동으로 OpenStreetMap으로 바뀝니다. 브라우저 콘솔에 "네이버 지도 인증 실패" 안내가 남습니다.
 
 - 작업 화면: http://localhost:8000/app.html (http://localhost:8000 도 같은 곳으로 이동)
 - API 문서(OpenAPI): http://localhost:8000/docs
@@ -183,4 +195,4 @@ e2e_app.py / test_workflow.py   브라우저 테스트
 
 ## 범위 밖
 
-React 재구현, Redis·Celery, 별도 벡터 DB, OpenTelemetry, Kubernetes, MCP 필수 연동, OCR(스캔 PDF는 업로드 시 오류), 유료 지도 API(OpenStreetMap 타일 사용), 알림(링크 열람 시 상담 기록에만 남음).
+React 재구현, Redis·Celery, 별도 벡터 DB, OpenTelemetry, Kubernetes, MCP 필수 연동, OCR(스캔 PDF는 업로드 시 오류), 지도 위 경로·길찾기(네이버 지도는 표시만 사용), 알림(링크 열람 시 상담 기록에만 남음).
