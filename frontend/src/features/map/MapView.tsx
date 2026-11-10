@@ -1,6 +1,7 @@
 /* 지도 (#/map, #/map/l/매물, #/map/match/고객, #/map/ask/질문):
    단계별 색 핀, 매물 목록·상세, 거래 단계 변경, 확인할 사항, 현장 메모, 공공데이터, 매물 등록·수정·종료, 질문 결과 강조.
-   예전 app-map.js + app-ask.js를 옮겼다. 핀은 Leaflet divIcon이라 예전 .pin HTML을 그대로 쓴다. */
+   예전 app-map.js + app-ask.js를 옮겼다. 지도는 네이버 지도(안 되면 OpenStreetMap, engine.ts)이고
+   핀은 HTML이라 예전 .pin 모양을 그대로 쓴다. */
 import { AnimatePresence, motion } from "motion/react";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { ViewProps } from "@/App";
@@ -14,7 +15,7 @@ import { useUser } from "@/state/session";
 import { useToast } from "@/state/ui";
 import { AskResult } from "./AskResult";
 import { askHash, askKey, getMapAsk, mapMemory, searchOnce, setMapAsk } from "./askStore";
-import { L, drawPlace, pinHtml, useLeafletMap } from "./leaflet";
+import { boundsOf, drawPlace, extendBounds, pinHtml, placeLabel, useMapEngine, type Pin } from "./engine";
 import { ListingDetail } from "./ListingDetail";
 import { ListingForm, type LatLngText } from "./ListingForm";
 import type { AskResult as AskResultData, AskState, Listing } from "./types";
@@ -62,7 +63,7 @@ export default function MapView({ a, b }: ViewProps) {
   const pickRef = useRef(false);
   pickRef.current = form !== null;
   const placeTempRef = useRef<(lat: number, lng: number) => void>(() => {});
-  const { map, failed } = useLeafletMap(mapEl, (lat, lng) => { if (pickRef.current) placeTempRef.current(lat, lng); });
+  const { map, failed } = useMapEngine(mapEl, { onClick: (p) => { if (pickRef.current) placeTempRef.current(p.lat, p.lng); } });
   const mapRef = useRef(map);
   mapRef.current = map;
 
@@ -175,17 +176,13 @@ export default function MapView({ a, b }: ViewProps) {
     if (!map || !listings) return;
     const first = !pinsShown.current;
     const ls = visible.filter((l) => l.lat && l.lng);
-    const markers = ls.map((l) => {
-      const mk = L.marker([l.lat!, l.lng!], {
-        icon: L.divIcon({ className: "pin-wrap", html: pinHtml(l, matchIds, detailId === l.id, first), iconSize: [0, 0] }),
-        zIndexOffset: detailId === l.id ? 1000 : stageIdx(l.stage) * 10,
-        title: `${l.label} ${l.title}`,
-      }).addTo(map);
-      mk.on("click", () => { if (!pickRef.current) navigate(`#/map/l/${l.id}`); });
-      return mk;
-    });
+    const markers = ls.map((l) => map.addPin({ lat: l.lat!, lng: l.lng! }, pinHtml(l, matchIds, detailId === l.id, first), {
+      zIndex: detailId === l.id ? 1000 : stageIdx(l.stage) * 10,
+      title: `${l.label} ${l.title}`,
+      onClick: () => { if (!pickRef.current) navigate(`#/map/l/${l.id}`); },
+    }));
     const place = ask?.result.place;
-    const placed = place ? drawPlace(map, place, ask!.result.listings.length) : null;
+    const placed = place ? drawPlace(map, place, placeLabel(place, ask!.result.listings.length)) : null;
 
     const key = `${scope}|${match ? match.customer.id : ""}|${ask ? ask.key : ""}`;
     const many = Boolean(matchIds && matchIds.size);
@@ -193,10 +190,11 @@ export default function MapView({ a, b }: ViewProps) {
     if (fittedFor.current !== key && (focus.length || placed)) {
       fittedFor.current = key;
       // 질문한 지역이 있으면 그 지역(과 맞는 매물)에, 없으면 매물에 맞춘다
-      let bounds = placed && !many ? placed.bounds : L.latLngBounds(focus.map((l) => [l.lat!, l.lng!] as [number, number]));
-      if (placed && many) bounds = bounds.extend(placed.bounds);
-      // 처음 맞출 때는 애니메이션 없이 — 지도가 움직이는 동안 핀 클릭이 빗나가지 않도록
-      map.fitBounds(bounds.pad(0.2), { animate: false, maxZoom: placed && !focus.length ? 13 : 16 });
+      const pins = boundsOf(focus.map((l) => ({ lat: l.lat!, lng: l.lng! })));
+      let bounds = placed && !many ? placed.bounds : pins;
+      if (placed && many && bounds) bounds = extendBounds(bounds, placed.bounds);
+      // 애니메이션 없이 맞춘다 — 지도가 움직이는 동안 핀 클릭이 빗나가지 않도록
+      if (bounds) map.fit(bounds, { pad: 0.2, maxZoom: placed && !focus.length ? 13 : 16 });
     }
 
     // 처음 불러온 핀만 차례로 떨어지듯 나타난다 (이후 필터·선택으로 다시 그릴 때는 바로)
@@ -205,7 +203,7 @@ export default function MapView({ a, b }: ViewProps) {
     if (first && markers.length) {
       raf = requestAnimationFrame(() => {
         pinsShown.current = true;
-        const els = markers.map((mk) => mk.getElement()?.querySelector(".pin-drop")).filter((x): x is Element => Boolean(x));
+        const els = markers.map((mk) => mk.el()?.querySelector(".pin-drop")).filter((x): x is Element => Boolean(x));
         undo = staggerIn(els, { gap: 28, y: -8, duration: 240 });
       });
     }
@@ -213,24 +211,23 @@ export default function MapView({ a, b }: ViewProps) {
       cancelAnimationFrame(raf);
       undo();
       markers.forEach((mk) => mk.remove());
-      placed?.layer.remove();
+      placed?.remove();
     };
   }, [map, listings, visible, matchIds, detailId, ask, scope, match]);
 
   // ── 매물 등록·수정: 지도를 눌러 위치를 정한다 ──
-  const tempMarker = useRef<L.Marker | null>(null);
+  const tempMarker = useRef<Pin | null>(null);
   const placeTemp = useCallback((lat: number, lng: number) => {
     setPos({ lat: lat.toFixed(6), lng: lng.toFixed(6) });
     const m = mapRef.current;
     if (!m) return;
-    if (tempMarker.current) tempMarker.current.setLatLng([lat, lng]);
+    if (tempMarker.current) tempMarker.current.setPosition({ lat, lng });
     else {
-      const mk = L.marker([lat, lng], {
-        draggable: true,
-        icon: L.divIcon({ className: "pin-wrap", html: '<div class="temp-pin"></div>', iconSize: [16, 16], iconAnchor: [8, 8] }),
-      }).addTo(m);
-      mk.on("dragend", () => { const p = mk.getLatLng(); placeTempRef.current(p.lat, p.lng); });
-      tempMarker.current = mk;
+      // .temp-pin은 18px + 테두리 3px → 가운데(12, 12)가 좌표
+      tempMarker.current = m.addPin({ lat, lng }, '<div class="temp-pin"></div>', {
+        draggable: true, anchor: [12, 12], zIndex: 2000,
+        onDragEnd: (p) => placeTempRef.current(p.lat, p.lng),
+      });
     }
   }, []);
   placeTempRef.current = placeTemp;
@@ -269,7 +266,7 @@ export default function MapView({ a, b }: ViewProps) {
     sideEl = (
       <ListingDetail key={detailId} id={detailId} reloadKey={tick}
         backLabel={ask ? "질문 결과" : "목록"} onBack={back} onEdit={openForm}
-        onLoaded={(l) => { if (mapRef.current && l.lat && l.lng) mapRef.current.panTo([l.lat, l.lng]); }}
+        onLoaded={(l) => { if (mapRef.current && l.lat && l.lng) mapRef.current.panTo({ lat: l.lat, lng: l.lng }); }}
         onRouteReload={() => setTick((t) => t + 1)}
         onNotesChanged={() => {
           // 메모가 바뀌면 같은 질문으로 돌아갈 때 새로 찾는다

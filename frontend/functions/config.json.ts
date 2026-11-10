@@ -7,6 +7,8 @@
 interface Env {
   /** 예: https://api.example.com (끝의 / 없이) */
   API_URL?: string;
+  /** (선택) 네이버 지도 Client ID. 비우면 화면이 API 서버의 /api/public-config(서버 .env의 NAVER_CLIENT_ID)에서 받는다 */
+  NAVER_CLIENT_ID?: string;
 }
 
 const isHttpUrl = (v: string) => {
@@ -20,7 +22,9 @@ const isHttpUrl = (v: string) => {
 
 export const onRequestGet = ({ env }: { env: Env }): Response => {
   const raw = (env.API_URL || "").trim().replace(/\/+$/, "");
-  return new Response(JSON.stringify({ apiUrl: isHttpUrl(raw) ? raw : "" }), {
+  const naver = (env.NAVER_CLIENT_ID || "").trim();
+  const body = { apiUrl: isHttpUrl(raw) ? raw : "", naverMapClientId: /^[A-Za-z0-9_-]{1,64}$/.test(naver) ? naver : "" };
+  return new Response(JSON.stringify(body), {
     headers: {
       "content-type": "application/json; charset=utf-8",
       "cache-control": "no-store",

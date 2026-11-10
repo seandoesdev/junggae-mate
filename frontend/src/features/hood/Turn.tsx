@@ -1,6 +1,5 @@
 /* 답변 한 칸(.turn): 질문, 이해한 조건(눌러서 빼기), 맞는 매물(작은 지도 + 목록), 답변 문단과 각주, 지도에서 보기·고객 자료로 만들기.
    compact: Ask Hood 패널 (지도 없음, 매물 5건까지). 답을 기다리는 칸은 .turn.is-pending */
-import L from "leaflet";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { animate } from "animejs";
 import { NoteText, SrcRef } from "@/components/Notes";
@@ -11,10 +10,9 @@ import { useUser } from "@/state/session";
 import { useUi } from "@/state/ui";
 import { openAskReport } from "./dialogs";
 import { showAskOnMap } from "@/features/map/askStore";
+import { boundsOf, circleBounds, esc, extendBounds, useMapEngine, type Bounds } from "@/features/map/engine";
 import type { AskResult } from "@/features/map/types";
 import { hood, when, type Slot, type Turn } from "./store";
-
-const esc = (v: unknown) => String(v ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
 
 /** 답변을 지도 질문 결과로 넘긴다. 지도 화면은 다시 묻지 않고 이 답변을 그대로 쓴다 */
 function goMap(t: Turn) {
@@ -22,43 +20,38 @@ function goMap(t: Turn) {
   showAskOnMap(q, drop, t as unknown as AskResult);
 }
 
-/* 답변 안의 작은 지도: 맞는 매물과 질문한 지역 */
+/* 답변 안의 작은 지도: 맞는 매물과 질문한 지역 (네이버 지도, 안 되면 OpenStreetMap) */
 function TurnMap({ t }: { t: Turn }) {
   const el = useRef<HTMLDivElement>(null);
+  const { map } = useMapEngine(el, {
+    center: t.place ? { lat: t.place.lat, lng: t.place.lng } : undefined, zoom: 13, controls: false,
+  });
   useEffect(() => {
-    if (!el.current) return;
-    // 만들자마자 위치를 정해 둔다 (위치가 없는 지도에는 도형이 바로 붙지 않아 범위 계산이 실패한다)
-    const map = L.map(el.current, { zoomControl: false, scrollWheelZoom: false, attributionControl: false })
-      .setView(t.place ? [t.place.lat, t.place.lng] : [37.547, 126.951], 13);
-    L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom: 19 }).addTo(map);
-    const pts: L.LatLng[] = [];
+    if (!map) return;
+    const undo: (() => void)[] = [];
+    let area: Bounds | null = null;
     if (t.place) {
+      const c = { lat: t.place.lat, lng: t.place.lng };
       if (t.place.radius_m) {
-        L.circle([t.place.lat, t.place.lng], { radius: t.place.radius_m, color: "#1b6c80", weight: 1.5, dashArray: "4 4", fillOpacity: 0.06, interactive: false }).addTo(map);
-        const box = L.latLng(t.place.lat, t.place.lng).toBounds(t.place.radius_m * 2);
-        pts.push(box.getSouthWest(), box.getNorthEast());
-      } else pts.push(L.latLng(t.place.lat, t.place.lng));
+        undo.push(map.addCircle(c, t.place.radius_m).remove);
+        area = circleBounds(c, t.place.radius_m);
+      } else area = boundsOf([c]);
       if (!t.listings.length) {
-        L.marker([t.place.lat, t.place.lng], {
-          interactive: false,
-          icon: L.divIcon({ className: "pin-wrap", html: `<div class="place-tag">${esc(t.place.name)} · 등록된 매물 없음</div>`, iconSize: [0, 0] }),
-        }).addTo(map);
+        undo.push(map.addPin(c, `<div class="place-tag">${esc(t.place.name)} · 등록된 매물 없음</div>`, { interactive: false }).remove);
       }
     }
     const ls = t.listings.filter((l) => l.lat && l.lng);
     ls.forEach((l) => {
-      L.marker([l.lat!, l.lng!], {
-        icon: L.divIcon({
-          className: "pin-wrap", iconSize: [0, 0],
-          html: `<div class="pin" data-s="${esc(l.stage)}" style="--c:${STAGE_COLOR[l.stage]}"><span>${esc(l.label)} ${eok(l.price)}</span></div>`,
-        }),
-      }).on("click", () => navigate(`#/map/l/${l.id}`)).addTo(map);
+      undo.push(map.addPin({ lat: l.lat!, lng: l.lng! },
+        `<div class="pin" data-s="${esc(l.stage)}" style="--c:${STAGE_COLOR[l.stage]}"><span>${esc(l.label)} ${eok(l.price)}</span></div>`,
+        { title: `${l.label} ${l.title}`, onClick: () => navigate(`#/map/l/${l.id}`) }).remove);
     });
     // 매물이 있으면 매물에 맞추고(질문한 지역 반경 포함), 없으면 질문한 지역에 맞춘다
-    const all = ls.length ? [...ls.map((l) => L.latLng(l.lat!, l.lng!)), ...(t.place && t.place.radius_m ? pts : [])] : pts;
-    if (all.length) map.fitBounds(L.latLngBounds(all).pad(0.25), { animate: false, maxZoom: ls.length ? 15 : 12 });
-    return () => { map.remove(); };
-  }, [t]);
+    const pins = boundsOf(ls.map((l) => ({ lat: l.lat!, lng: l.lng! })));
+    const all = pins && area && t.place?.radius_m ? extendBounds(pins, area) : pins ?? area;
+    if (all) map.fit(all, { pad: 0.25, maxZoom: ls.length ? 15 : 12 });
+    return () => undo.forEach((f) => f());
+  }, [map, t]);
   return <div className="turn-map" ref={el} role="img" aria-label="맞는 매물 지도" />;
 }
 

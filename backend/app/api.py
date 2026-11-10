@@ -6,7 +6,7 @@ from typing import Literal
 
 import psycopg
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel, Field, field_validator
 
 from . import assistant, drafting, hood, llm, structured, public_catalog, public_data, public_sources, rag, workflow
@@ -779,6 +779,13 @@ def evidence_detail(chunk_id: str, user: CurrentUser = Depends(current_user)):
 
 
 # ---------- 운영 ----------
+
+@router.get("/public-config")
+def public_config():
+    """화면이 지도를 그리기 전에 읽는 공개 설정. 화면을 Cloudflare에서 내려줄 때 서버 .env의 값을 화면에 알려 준다.
+    네이버 지도 Client ID는 브라우저의 지도 스크립트 주소에 실리는 공개 값이다. Client Secret은 절대 넣지 않는다"""
+    return JSONResponse({"naverMapClientId": settings.naver_client_id}, headers={"Cache-Control": "no-store"})
+
 
 @router.get("/health")
 def health():

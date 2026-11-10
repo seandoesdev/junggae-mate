@@ -15,3 +15,6 @@ os.environ["DATABASE_URL"] = _test
 # CORS: 화면을 다른 주소(Cloudflare 등)에서 내려주는 배포를 흉내 낸다 (test_api.py의 CORS 테스트)
 os.environ["CORS_ORIGINS"] = "https://app.example.test, https://admin.example.test/"
 os.environ["CORS_ORIGIN_REGEX"] = r"^https://[a-z0-9-]+\.preview\.example\.test$"
+# 네이버 지도: Client ID만 화면에 알려 주고 Secret은 내보내지 않는지 본다 (test_api.py)
+os.environ["NAVER_CLIENT_ID"] = "test-naver-client-id"
+os.environ["NAVER_CLIENT_SECRET"] = "test-naver-secret-must-not-leak"

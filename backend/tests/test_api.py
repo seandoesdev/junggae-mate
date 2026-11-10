@@ -17,6 +17,16 @@ def client():
         yield c
 
 
+def test_public_config_exposes_naver_client_id_but_never_secret(client):
+    """지도 스크립트에 실을 Client ID는 로그인 없이 알려 주고, Client Secret은 어떤 공개 응답에도 넣지 않는다"""
+    for path in ("/api/public-config", "/config.json"):
+        res = client.get(path)
+        assert res.status_code == 200, res.text
+        assert res.json()["naverMapClientId"] == "test-naver-client-id"
+        assert res.headers["cache-control"] == "no-store"
+        assert "test-naver-secret-must-not-leak" not in res.text
+
+
 def test_cors_allows_configured_frontend_origins_only(client):
     """화면을 Cloudflare 등 다른 주소에서 내려줄 때: 허용한 화면만 API를 부를 수 있다 (Bearer 헤더, 쿠키 없음)"""
     origin = "https://app.example.test"
