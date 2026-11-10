@@ -5,7 +5,7 @@
    - 핀은 HTML이라 예전 .pin 모양(legacy.css)을 그대로 쓴다. 기준점은 핀의 왼쪽 위(0,0)이고 .pin이 스스로 위로 올라간다 */
 import { useEffect, useRef, useState, type RefObject } from "react";
 import { naverClientId } from "@/lib/config";
-import { STAGES, STAGE_COLOR, STAGE_LABEL, eok, stageIdx } from "@/lib/format";
+import { STAGES, STAGE_COLOR, STAGE_LABEL, priceText, shortPrice, stageIdx, type Deal } from "@/lib/format";
 import type { AskPlace, Listing } from "./types";
 
 export type LatLng = { lat: number; lng: number };
@@ -313,14 +313,14 @@ export const esc = (v: unknown) =>
   String(v ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
 
 /** 매물 핀 HTML. .pin-drop은 처음 나타날 때 움직임을 받는 감싸개 (.pin 자체의 위치 transform을 건드리지 않도록) */
-export function pinHtml(l: Listing, matchIds: Set<number> | null, selected: boolean, hiddenAtFirst: boolean) {
+export function pinHtml(l: Listing, matchIds: Set<number> | null, selected: boolean, hiddenAtFirst: boolean, deal?: Deal | null) {
   const n = stageIdx(l.stage) + 1;
   const cls = ["pin", !l.mine && "is-other", matchIds && (matchIds.has(l.id) ? "is-match" : "is-dim"), selected && "is-sel"]
     .filter(Boolean).join(" ");
   return `<div class="pin-drop"${hiddenAtFirst ? ' style="opacity:0"' : ""}><div class="${cls}" data-s="${esc(l.stage)}" data-id="${l.id}" style="--c:${STAGE_COLOR[l.stage]}" role="button" tabindex="0"
-      aria-label="${esc(l.label)} ${esc(l.title)} ${eok(l.price)} ${esc(STAGE_LABEL[l.stage])}">
+      aria-label="${esc(l.label)} ${esc(l.title)} ${esc(priceText(l))} ${esc(STAGE_LABEL[l.stage])}">
     ${l.mine ? "" : `<span class="pa" title="담당 ${esc(l.agent_name)}">${esc((l.agent_name || "?")[0])}</span>`}
-    <span>${esc(l.label)} ${eok(l.price)}</span><span class="pp">${STAGES.map((_, i) => `<i class="${i < n ? "on" : ""}"></i>`).join("")}</span>
+    <span>${esc(l.label)} ${esc(shortPrice(l, deal))}</span><span class="pp">${STAGES.map((_, i) => `<i class="${i < n ? "on" : ""}"></i>`).join("")}</span>
     ${l.active_deals ? `<span class="pc">${l.active_deals}</span>` : ""}</div></div>`;
 }
 

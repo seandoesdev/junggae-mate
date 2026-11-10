@@ -69,11 +69,11 @@ def current_user(creds: HTTPAuthorizationCredentials | None = Depends(bearer)) -
         raise _unauthorized("토큰이 유효하지 않거나 만료되었습니다.")
     row = fetch_one(
         """SELECT u.id, u.tenant_id, t.name AS tenant_name, u.name, u.email, u.role
-           FROM users u JOIN tenants t ON t.id = u.tenant_id WHERE u.id = %s""",
+           FROM users u JOIN tenants t ON t.id = u.tenant_id WHERE u.id = %s AND u.active""",
         (int(payload["sub"]),),
     )
-    if not row:
-        raise _unauthorized()
+    if not row:  # 없는 계정이거나 정지된 계정 → 기존 토큰도 바로 막힌다
+        raise _unauthorized("정지되었거나 없는 계정입니다. 다시 로그인하세요.")
     return CurrentUser(**row)
 
 

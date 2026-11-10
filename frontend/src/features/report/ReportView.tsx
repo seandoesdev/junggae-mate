@@ -8,7 +8,7 @@ import { NoteText, textWithTokens } from "@/components/Notes";
 import { ApiError, api, getToken } from "@/lib/api";
 import { apiUrl } from "@/lib/config";
 import { staggerIn } from "@/lib/anime";
-import { NOTE_TOKEN, dateTime, day, eok } from "@/lib/format";
+import { NOTE_TOKEN, dateTime, day, eok, priceText, won } from "@/lib/format";
 import { DUR, EASE_OUT, fadeUp } from "@/lib/motion";
 import { navigate } from "@/lib/router";
 import type { Evidence } from "@/lib/types";
@@ -20,7 +20,10 @@ type Check = { condition: string; ok: boolean; detail: string };
 type Listing = {
   label: string;
   title: string;
-  price: number;
+  price: number | null;
+  jeonse_deposit?: number | null;
+  monthly_deposit?: number | null;
+  monthly_rent?: number | null;
   price_history: { price: number }[];
   area_m2: number;
   floor: string | null;
@@ -89,7 +92,7 @@ function CompareTable({ ls }: { ls: Listing[] }) {
         <thead><tr><th style={{ width: 110 }} />{ls.map((l, i) => <th key={i}>{l.label} {l.title}</th>)}</tr></thead>
         <tbody>
           {row("매도 희망가", (l) => (
-            <>{eok(l.price)}{l.price_history.length > 1 && <><br /><small>{l.price_history.map((h) => eok(h.price)).join("→")}</small></>}</>
+            <>{priceText(l)}{l.price_history.length > 1 && <><br /><small>{l.price_history.map((h) => won(h.price)).join("→")}</small></>}</>
           ))}
           {row("전용면적 / 층", (l) => `${l.area_m2}㎡ / ${l.floor || "-"}`)}
           {row("교통", (l) => (l.station ? `${l.station} 도보 ${l.station_walk_min}분` : "-"))}

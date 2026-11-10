@@ -64,7 +64,15 @@ def parse_query(q: str, known_stations: list[str] = (), known_complexes: list[st
     text = re.sub(r"\s+", " ", q.strip())
     f: dict = {"district": None, "price_min": None, "price_max": None, "area_min": None, "area_max": None,
                "area_note": None, "walk_max": None, "station": None, "complex": None, "place": None,
-               "first_home": False, "wants": []}
+               "first_home": False, "wants": [], "deal": None, "rent_max": None}
+
+    # 거래 종류: 월세 > 전세 > 매매. 전세·월세면 아래 금액 조건은 보증금에 적용한다
+    if "월세" in text or re.search(r"월\s*\d{1,4}\s*만", text):
+        f["deal"] = "monthly"
+    elif "전세" in text:
+        f["deal"] = "jeonse"
+    elif any(w in text for w in ("매매", "매수", "구입", "사려", "살 집")):
+        f["deal"] = "sale"
 
     for gu in sorted(SEOUL_GU, key=len, reverse=True):
         short = gu[:-1]
@@ -84,6 +92,11 @@ def parse_query(q: str, known_stations: list[str] = (), known_complexes: list[st
                 f["price_min"] = _amount(m)
             elif f["price_max"] is None:
                 f["price_max"] = _amount(m)
+    # 월세 보증금은 '보증금 5000만'처럼 억 없이 말하는 경우가 많다. 월세는 '월 60만'·'월세 60만'
+    if f["price_max"] is None and (m := re.search(r"보증금\s*(\d{2,5})\s*만", text)):
+        f["price_max"] = int(m.group(1))
+    if f["deal"] == "monthly" and (m := re.search(r"월(?:세)?\s*(\d{1,4})\s*만", text)):
+        f["rent_max"] = int(m.group(1))
 
     # 면적: 전용 ㎡ 또는 공급 평형
     if m := re.search(_N + r"\s*(?:㎡|m2|m²|제곱미터|평방미터)", text):
@@ -138,14 +151,19 @@ def chips(f: dict) -> list[dict]:
         out.append({"key": "district", "label": f["district"]})
     if f["place"]:
         out.append({"key": "place", "label": f"{f['place']['name']} 반경 {f['place']['radius_m'] / 1000:g}km"})
+    if f.get("deal"):
+        out.append({"key": "deal", "label": drafting.DEAL_LABEL[f["deal"]]})
+    pre = "보증금 " if f.get("deal") in ("jeonse", "monthly") else ""
     if f["price_min"] and f["price_max"]:
         label = (f"{eok(f['price_min'])}대" if f["price_max"] - f["price_min"] == 9999
                  else f"{eok(f['price_min'])}~{eok(f['price_max'])}")
-        out.append({"key": "price", "label": label})
+        out.append({"key": "price", "label": pre + label})
     elif f["price_max"]:
-        out.append({"key": "price", "label": f"{eok(f['price_max'])} 이하"})
+        out.append({"key": "price", "label": f"{pre}{drafting.won(f['price_max'])} 이하"})
     elif f["price_min"]:
-        out.append({"key": "price", "label": f"{eok(f['price_min'])} 이상"})
+        out.append({"key": "price", "label": f"{pre}{drafting.won(f['price_min'])} 이상"})
+    if f.get("rent_max"):
+        out.append({"key": "rent", "label": f"월세 {f['rent_max']}만 원 이하"})
     if f["area_note"]:
         out.append({"key": "area", "label": f["area_note"]})
     if f["walk_max"]:
@@ -169,6 +187,10 @@ def drop(f: dict, keys: list[str]) -> dict:
             f["area_min"] = f["area_max"] = f["area_note"] = None
         elif k == "walk":
             f["walk_max"] = None
+        elif k == "deal":
+            f["deal"] = None
+        elif k == "rent":
+            f["rent_max"] = None
         elif k == "first_home":
             f["first_home"] = False
         elif k.startswith("want:"):
@@ -190,8 +212,9 @@ def normalize_region(region: str | None) -> str | None:
 
 
 def has_conditions(f: dict) -> bool:
-    return any(f[k] for k in ("district", "place", "price_min", "price_max", "area_min", "area_max", "walk_max",
-                              "station", "complex"))
+    # 거래 종류만으로는 매물을 찾는 질문으로 보지 않는다 ('전세 시세 어때?'). 매물을 찾을 때는 거래 종류로 거른다 (_unmet)
+    return any(f.get(k) for k in ("district", "place", "price_min", "price_max", "area_min", "area_max", "walk_max",
+                                  "station", "complex", "rent_max"))
 
 
 # ---------- 매물 찾기 ----------
@@ -205,10 +228,21 @@ def _unmet(l: dict, f: dict) -> list[str]:
     out = []
     if f["district"] and l["district"] != f["district"]:
         out.append(f"지역 {l['district']}")
-    if f["price_max"] and l["price"] > f["price_max"]:
-        out.append(f"가격 {eok(l['price'])} (기준 {eok(f['price_max'])} 이하)")
-    if f["price_min"] and l["price"] < f["price_min"]:
-        out.append(f"가격 {eok(l['price'])} (기준 {eok(f['price_min'])} 이상)")
+    mode = f.get("deal")
+    if mode and mode not in drafting.offers(l):
+        out.append(f"{drafting.DEAL_LABEL[mode]} 매물 아님 ({drafting.price_text(l)})")
+    else:
+        m = mode or "sale"
+        amt, lab = drafting.amount(l, m), ("가격" if m == "sale" else "보증금")
+        if (f["price_max"] or f["price_min"]) and amt is None:
+            out.append(f"매매가 없음 ({drafting.price_text(l)})")
+        else:
+            if f["price_max"] and amt > f["price_max"]:
+                out.append(f"{lab} {drafting.won(amt)} (기준 {drafting.won(f['price_max'])} 이하)")
+            if f["price_min"] and amt < f["price_min"]:
+                out.append(f"{lab} {drafting.won(amt)} (기준 {drafting.won(f['price_min'])} 이상)")
+        if m == "monthly" and f.get("rent_max") and l["monthly_rent"] > f["rent_max"]:
+            out.append(f"월세 {l['monthly_rent']}만 원 (기준 {f['rent_max']}만 원 이하)")
     if f["area_min"] and l["area_m2"] < f["area_min"]:
         out.append(f"전용 {l['area_m2']:g}㎡ (기준 {f['area_min']:g}㎡ 이상)")
     if f["area_max"] and l["area_m2"] > f["area_max"]:
@@ -234,6 +268,7 @@ def _near_miss(l: dict, f: dict) -> bool:
     g["area_min"] = f["area_min"] * 0.9 if f["area_min"] else None
     g["area_max"] = f["area_max"] * 1.1 if f["area_max"] else None
     g["walk_max"] = f["walk_max"] + 5 if f["walk_max"] else None
+    g["rent_max"] = f["rent_max"] * 1.1 if f.get("rent_max") else None
     g["place"] = {**f["place"], "radius_m": f["place"]["radius_m"] * 1.5} if f.get("place") else None
     return not _unmet(l, g)
 
@@ -288,7 +323,7 @@ def _want_match(want: str, l: dict, notes: list[dict], docs: list[dict]) -> dict
     if want == "가격 조정":
         h = l.get("price_history") or []
         if len(h) > 1 and h[-1]["price"] < h[0]["price"]:
-            a, b = eok(h[0]["price"]), eok(h[-1]["price"])
+            a, b = drafting.won(h[0]["price"]), drafting.won(h[-1]["price"])
             return {"text": f"{a}→{b} 조정", "say": f"가격이 {a}에서 {josa(b, '으로')} 조정되었습니다.", "source": "listing"}
         return None
     for n in notes:
@@ -318,7 +353,7 @@ def find_listings(conn, user, f: dict, query: str, as_of: date, *, browse: bool 
         pool = [l for l in all_ls if _near_miss(l, f)]
         relaxed = bool(pool)
     if f["first_home"] and not f["price_max"]:
-        pool = [l for l in pool if l["price"] <= drafting.FIRST_HOME_PRICE_LIMIT]
+        pool = [l for l in pool if l.get("price") is not None and l["price"] <= drafting.FIRST_HOME_PRICE_LIMIT]
 
     notes = listing_notes(conn, [l["id"] for l in pool])
     docs = _docs_about(conn, user.tenant_id, sorted({l["complex_name"] for l in pool}), as_of) if f["wants"] else []
@@ -336,7 +371,7 @@ def find_listings(conn, user, f: dict, query: str, as_of: date, *, browse: bool 
         out = [l for l in out if l["matched"]]  # 바라는 점만 말했으면 그 점이 확인되는 매물만 (없으면 빈 목록)
     if open_query:  # 조건도 바라는 점도 없으면 질문과 글자가 꽤 겹치는 매물만 (단지 이름·메모로 찾는 경우)
         out = [l for l in out if l["score"] >= 0.25]
-    out.sort(key=lambda l: (-l["score"], l["price"]))
+    out.sort(key=lambda l: (-l["score"], drafting.primary_amount(l) or 0))
     return out[:12], relaxed
 
 
@@ -383,8 +418,11 @@ def _merge_customer(f: dict, customer: dict | None, listing_intent: bool) -> dic
     f["first_home"] = f["first_home"] or bool(customer.get("first_home"))
     if listing_intent:
         f["district"] = f["district"] or customer.get("district")
+        f["deal"] = f.get("deal") or drafting.customer_mode(customer.get("deal_type"))
         if not f["price_max"] and not f["price_min"]:
             f["price_max"] = customer.get("budget_max")
+        if f["deal"] == "monthly" and not f.get("rent_max"):
+            f["rent_max"] = customer.get("monthly_rent_max")
         if not f["area_min"] and not f["area_max"] and customer.get("area_min"):
             f["area_min"] = float(customer["area_min"])
             f["area_note"] = f"전용 {f['area_min']:g}㎡ 이상"
@@ -461,16 +499,16 @@ def answer(conn, user, query: str, *, customer: dict | None = None, quote_id: st
         raise drafting.DomainError("질문을 적어 주세요.")
     names = conn.execute("SELECT DISTINCT station, complex_name FROM listings WHERE tenant_id = %s AND status = 'active'",
                          (user.tenant_id,)).fetchall()
-    f = parse_query(q, [r["station"] for r in names if r["station"]], [r["complex_name"] for r in names])
+    f = parse_query(q, [r["station"] for r in names if r["station"]], [r["complex_name"] for r in names if r["complex_name"]])
     listing_intent = has_conditions(f) or bool(f["wants"]) or any(w in q for w in LISTING_WORDS)
     f = drop(_merge_customer(f, customer, listing_intent), dropped or [])
     policy_q = rag.is_policy_question(q) or f["first_home"]
     market_q = any(w in q for w in MARKET_WORDS)
     want = {k: any(w in q for w in ws) for k, ws in STRUCT_WORDS.items()}
-    # 전세·월세 질문의 금액은 보증금 이야기다. 매매 매물 가격 조건으로 쓰지 않는다
-    rent_budget = want["rent"] and bool(f["price_max"] or f["price_min"])
-    if rent_budget:
-        f = drop(f, ["price"])
+    # 전세·월세 질문의 금액은 보증금 조건이다 (parse_query가 거래 종류를 함께 잡아 _unmet에서 보증금과 비교).
+    # 다만 금액 없이 시세를 묻는 질문('마포한강뷰 전세 시세')은 단지의 전월세 사례를 묻는 것이라 매물을 거래 종류로 거르지 않는다
+    if market_q and f.get("deal") and not (f["price_max"] or f["price_min"] or f.get("rent_max")):
+        f = drop(f, ["deal"])
 
     browse = bool(dropped) or (not has_conditions(f) and not f["wants"] and not policy_q and any(w in q for w in BROWSE_WORDS))
     listings, relaxed = (find_listings(conn, user, f, q, as_of, browse=browse, near_miss=cfg["near_miss"])
@@ -536,7 +574,8 @@ def answer(conn, user, query: str, *, customer: dict | None = None, quote_id: st
             walk = (f", {l['station']} 도보 {l['station_walk_min']}분" if l.get("station") and l.get("station_walk_min") is not None
                     else f", {l['station']} 인근" if l.get("station") else "")
             gap = f" (차이: {', '.join(l['unmet'])})" if l["unmet"] else ""
-            body.say(f"{l['label']} {josa(l['title'], '은는')} {eok(l['price'])}, 전용 {l['area_m2']:g}㎡{walk}입니다{gap}.", [lid])
+            body.say(f"{l['label']} {josa(l['title'], '은는')} {drafting.price_text(l, f.get('deal'))}, "
+                     f"전용 {l['area_m2']:g}㎡{walk}입니다{gap}.", [lid])
             for m in l["matched"]:
                 body.say(m["say"], [body.add(rag.to_evidence(m["hit"])) if m["source"] == "doc" else lid])
             if refs[l["id"]]:
@@ -545,8 +584,6 @@ def answer(conn, user, query: str, *, customer: dict | None = None, quote_id: st
                          [body.add(drafting.trade_evidence(l, ref))])
             if any(want.values()):
                 _structured_sentences(body, l, facts.setdefault(l["id"], structured.facts(conn, user.tenant_id, l)), want, routes)
-        if rent_budget:
-            body.check("전세·월세 금액은 매매 매물 가격 조건으로 쓰지 않았습니다. 보증금 비교는 위 전월세 사례로 확인")
         for w in f["wants"]:
             if listings and not any(m["want"] == w for l in shown for m in l["matched"]):
                 body.check(f"{josa(chr(39) + w + chr(39), '은는')} 자료에서 확인되지 않았습니다. 방문해서 확인")
@@ -554,7 +591,7 @@ def answer(conn, user, query: str, *, customer: dict | None = None, quote_id: st
     # 2) 정책·법령 (문서 근거 검색 + 근거 게이트)
     if f["first_home"] and shown:
         policy = [h for h in hits if h["source_type"] == "policy" and "주택가격" in h["text"]]
-        ok = [l["label"] for l in shown if l["price"] <= drafting.FIRST_HOME_PRICE_LIMIT]
+        ok = [l["label"] for l in shown if l.get("price") is not None and l["price"] <= drafting.FIRST_HOME_PRICE_LIMIT]
         if policy and ok:
             body.say(f"{'·'.join(ok)} 매물은 주택가격 9억 원 이하라 생애최초 구입 지원의 가격 기준에는 해당합니다.",
                      [body.add(ev_of(policy[0]))])
@@ -584,7 +621,8 @@ def answer(conn, user, query: str, *, customer: dict | None = None, quote_id: st
             body.add(ev)
         context = (f"기준일 {as_of}. 질문에서 이해한 조건: {' · '.join(c['label'] for c in chips(f)) or '없음'}. "
                    f"찾은 매물 {len(listings)}건{' (조건을 넓혀 찾음)' if relaxed else ''}: "
-                   + "; ".join(f"{l['label']} {l['title']} {eok(l['price'])} {l['area_m2']:g}㎡" for l in shown))
+                   + "; ".join(f"{l['label']} {l['title']} {drafting.price_text(l, f.get('deal'))} {l['area_m2']:g}㎡"
+                               for l in shown))
         if customer:
             context += f". 고객 조건: {drafting.cond_summary(customer)}"
         drafting.llm_body(body, f"중개사의 질문에 대한 답변 (중개사 1인칭, 존댓말, 사실마다 출처 id): {q}", context)
@@ -595,7 +633,8 @@ def answer(conn, user, query: str, *, customer: dict | None = None, quote_id: st
     if not body.opinion:
         body.say("질문과 관련된 매물이나 자료를 찾지 못했습니다.", [])
 
-    cond = {"budget_max": f["price_max"], "area_min": f["area_min"], "district": f["district"], "station_walk_max": f["walk_max"]}
+    cond = {"budget_max": f["price_max"], "area_min": f["area_min"], "district": f["district"], "station_walk_max": f["walk_max"],
+            "deal_type": drafting.DEAL_LABEL[f["deal"]] if f.get("deal") else None, "monthly_rent_max": f.get("rent_max")}
     snapshot = [{**{k: v for k, v in l.items() if k != "score"}, "checks": drafting.condition_checks(l, cond),
                  "trade_reference": refs[l["id"]], "matched": [{"want": m["want"], "text": m["text"]} for m in l["matched"]],
                  "public": structured.public_summary(facts[l["id"]]) if l["id"] in facts else {}}

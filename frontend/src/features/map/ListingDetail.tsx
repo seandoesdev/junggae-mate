@@ -5,12 +5,13 @@ import { SrcRef } from "@/components/Notes";
 import { Prog, StageTag } from "@/components/Stage";
 import { api } from "@/lib/api";
 import { staggerIn } from "@/lib/anime";
-import { STAGES, STAGE_COLOR, STAGE_LABEL, dateTime, day, eok, stageIdx } from "@/lib/format";
+import { PROPERTY_LABEL, STAGES, STAGE_COLOR, STAGE_LABEL, dateTime, day, eok, priceText, stageIdx, won } from "@/lib/format";
 import { DUR, EASE_OUT } from "@/lib/motion";
 import { navigate } from "@/lib/router";
 import { useUser } from "@/state/session";
 import { useToast, useUi } from "@/state/ui";
 import { DropDialog, LinkDialog } from "./dialogs";
+import { MandateSection } from "./MandateSection";
 import { PublicSection } from "./PublicSection";
 import type { Customer, Deal, Listing, ListingDetail as Detail } from "./types";
 import { useBusyKey } from "./util";
@@ -91,7 +92,9 @@ export function ListingDetail({ id, reloadKey, backLabel, onBack, onEdit, onLoad
     Number(a.stage === "dropped") - Number(b.stage === "dropped") || stageIdx(b.stage) - stageIdx(a.stage));
   const tr = r.trade_reference;
   const ph = l.price_history;
-  const hist = ph.length > 1 ? `${ph.map((h) => eok(h.price)).join("→")} (${day(ph[ph.length - 1].changed_at)})` : "";
+  const hist = ph.length > 1 ? `${ph.map((h) => won(h.price)).join("→")} (${day(ph[ph.length - 1].changed_at)})` : "";
+  const area = `${l.area_m2}㎡${l.supply_m2 ? ` (공급 ${l.supply_m2}㎡)` : ""}`;
+  const rooms = [l.rooms != null && `방 ${l.rooms}`, l.baths != null && `욕실 ${l.baths}`, l.facing].filter(Boolean).join(" · ");
 
   const changeStage = async (dealId: number, stage: string, reason?: string) => {
     const res = await api<{ warnings: string[]; deal: { customer_name: string; listing: { label: string } } }>(
@@ -161,8 +164,8 @@ export function ListingDetail({ id, reloadKey, backLabel, onBack, onEdit, onLoad
         <StageTag s={l.stage} />
       </div>
       <h2 id="listing-detail-title">{l.label} {l.title}</h2>
-      <div className="price num">
-        {eok(l.price)}
+      <div className="price num" data-deal={l.deal_types.join(" ")}>
+        {priceText(l)}
         {hist && <> <span className="muted" style={{ fontSize: 12, fontWeight: 400 }}>{hist}</span></>}
       </div>
       <div ref={progRef}>
@@ -239,10 +242,20 @@ export function ListingDetail({ id, reloadKey, backLabel, onBack, onEdit, onLoad
       </motion.div>
 
       <Sec i={4}>
+        <MandateSection listingId={l.id} reloadKey={reloadKey} />
+      </Sec>
+
+      <Sec i={5}>
         <div className="sec-h"><h2>매물 정보</h2><span className="muted">담당 {l.agent_name}</span></div>
         <dl className="kv">
-          <dt>전용면적</dt><dd className="num">{l.area_m2}㎡</dd>
+          <dt>유형</dt><dd>{PROPERTY_LABEL[l.property_type] || l.property_type}{l.complex_name !== l.title ? ` · ${l.complex_name}` : ""}</dd>
+          <dt>전용면적</dt><dd className="num">{area}</dd>
+          {rooms && <><dt>구조</dt><dd>{rooms}</dd></>}
           <dt>층</dt><dd>{l.floor || "-"}</dd>
+          {l.maintenance_fee != null && <><dt>관리비</dt><dd>월 {l.maintenance_fee}만 원{l.maintenance_note ? ` (${l.maintenance_note})` : ""}</dd></>}
+          {l.parking && <><dt>주차</dt><dd>{l.parking}</dd></>}
+          {l.move_in && <><dt>입주</dt><dd>{l.move_in}</dd></>}
+          {l.loan_amount != null && <><dt>융자</dt><dd>{won(l.loan_amount)}</dd></>}
           <dt>주소</dt><dd>{l.address}</dd>
           <dt>교통</dt><dd>{l.station ? `${l.station} 도보 ${l.station_walk_min ?? "-"}분` : "-"}</dd>
           <dt>공원</dt><dd>{l.park_walk_min != null ? `도보 ${l.park_walk_min}분` : "-"}</dd>

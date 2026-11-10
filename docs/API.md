@@ -1,4 +1,4 @@
-# 중개메이트 API 계약 v0.6
+# 중개메이트 API 계약 v0.7
 
 Base `/api`. 인증이 필요한 요청은 `Authorization: Bearer <token>`. tenant(사무소)는 토큰으로만 결정한다.
 오류: `{"detail": "...", "code": "..."}` (입력 검증 오류 422는 `detail`이 `[{loc, msg, type}]` 배열). 모든 응답에 `X-Request-ID`.
@@ -17,15 +17,25 @@ Base `/api`. 인증이 필요한 요청은 `Authorization: Bearer <token>`. tena
 
 - `POST /auth/login` `{email, password}` → `{access_token, user}`; user `{id, name, email, role: "agent"|"admin", tenant_id, tenant_name}`
 - `GET /me` → user
-- `GET /agents` → `[{id, name, role}]` (같은 사무소 중개사)
+- `GET /agents` → `[{id, name, role}]` (같은 사무소의 사용 중인 중개사)
+- 정지된 계정은 로그인 403, 기존 토큰도 401 (요청마다 계정 상태를 본다)
+- `GET /office/settings` → `{contact_owner_only}` · `PUT /office/settings` (관리자) `{contact_owner_only: bool}` — 켜면 고객 연락처(가림 표시 포함)는 담당 중개사·관리자만 본다
+- 관리자 계정 관리:
+  - `GET /admin/users` → `[{id, name, email, role, active, disabled_at, customers, listings, deals}]`
+  - `POST /admin/users` (201) `{name, email, password(8자 이상), role}` → user. 이메일 중복 409
+  - `POST /admin/users/{id}/disable` `{transfer_to}` → `{user, moved: {customers, listings, deals}}`. 정지하고 담당 고객·매물·진행 중 거래를 넘긴다(고객 상담 기록에 인계 기록). 자기 계정·같은 사람에게 넘기기는 422
+  - `POST /admin/users/{id}/enable` → user
 
 시드 계정 (비밀번호 `demo1234`): `agent@hanul.test` 김선용, `park@hanul.test` 박지은, `lee@hanul.test` 이도현, `admin@hanul.test` 관리자, `agent@other.test` (다른 사무소).
 
 ## 매물
 
-listing: `{id, label, title, complex_name, address, district, price, area_m2, floor, station, station_walk_min, park_walk_min, lat, lng, description, source, source_date, status, agent_id, agent_name, mine, stage (listing_stage), active_deals, price_history: [{price, changed_at}], created_at}`
+listing: `{id, label, title, property_type, complex_name, address, district, price, jeonse_deposit, monthly_deposit, monthly_rent, deal_types, price_text, area_m2, supply_m2, rooms, baths, facing, maintenance_fee, maintenance_note, parking, move_in, loan_amount, floor, station, station_walk_min, park_walk_min, lat, lng, description, source, source_date, status, agent_id, agent_name, mine, stage (listing_stage), active_deals, price_history: [{price, changed_at}], created_at}`
 
-- `GET /listings?mine=true&sort=price|recent&district=&max_price=&min_area=` → `{items: [listing], total}` (거래 중 매물만)
+- 금액: `price`(매매가) · `jeonse_deposit`(전세 보증금) · `monthly_deposit`+`monthly_rent`(월세). 하나 이상, 한 매물을 여러 거래 종류로 내놓을 수 있다. `deal_types`: `["sale"|"jeonse"|"monthly"]`, `price_text`: "매매 6.4억 · 전세 3.8억"
+- `property_type`: `apartment` · `officetel` · `villa` · `house` · `oneroom` · `commercial`. 아파트·오피스텔은 `complex_name` 필수, 그 밖에는 비우면 `title`
+- `price_history`는 대표 금액(매매가 → 전세 보증금 → 월세 보증금 순)의 변경 이력
+- `GET /listings?mine=true&sort=price|recent&district=&max_price=&min_area=&deal=sale|jeonse|monthly` → `{items: [listing], total}` (거래 중 매물만). `deal`을 주면 그 종류로 내놓은 매물만, `max_price`는 그 종류의 금액(매매가·보증금)에 적용
 - `GET /listings/{id}` → `{listing, trade_reference, deals: [deal], checks: [check], notes: [note]}`
 - `POST /listings/{id}/notes` `{text}` → note `{id, text, by, user_id, created_at}`. 사무소 누구나. 질문 검색에서 매물을 찾을 때 함께 본다.
 - `DELETE /listings/{id}/notes/{note_id}` → `{deleted}`. 쓴 사람·관리자만.
@@ -34,17 +44,32 @@ listing: `{id, label, title, complex_name, address, district, price, area_m2, fl
   - trade_reference: `{median_price, count, period, source, as_of} | null` (과거 신고 거래, 현재 호가 아님)
   - **check** (확인할 사항, 문서 근거 검색으로 출처를 붙임): `{key, text, level: "normal"|"warn"|"urgent", checked, checked_by, checked_at, sources: [evidence]}`
 - `PUT /listings/{id}/checks/{key}` `{checked: bool}` → check
-- `POST /listings` (201) `{title, complex_name, address, district, price, area_m2, lat, lng, floor?, station?, station_walk_min?, park_walk_min?, description?}` → listing (담당 = 등록한 사람)
-- `PUT /listings/{id}` 같은 입력 → listing (가격이 바뀌면 이력 추가). 담당자·관리자만.
-- `POST /listings/{id}/close` → listing (status=closed). 담당자·관리자만.
+- `POST /listings` (201) `{title, property_type?, complex_name?, address, district, price?, jeonse_deposit?, monthly_deposit?, monthly_rent?, area_m2, supply_m2?, rooms?, baths?, facing?, maintenance_fee?, maintenance_note?, parking?, move_in?, loan_amount?, lat, lng, floor?, station?, station_walk_min?, park_walk_min?, description?}` → listing (담당 = 등록한 사람). 금액이 하나도 없거나 월세 보증금·월세 중 하나만 있으면 422
+- `PUT /listings/{id}` 같은 입력 → listing (대표 금액이 바뀌면 이력 추가). 담당자·관리자만.
+- `POST /listings/{id}/close` → listing (status=closed). 담당자·관리자만. 그 매물의 출입 정보를 지운다.
+
+### 의뢰인(집주인)·의뢰 조건·방문 안내
+
+연락처·출입 정보는 암호문으로만 저장하고 응답에는 가림 표시(`***-****-1234`)나 `has_*`만 준다. 원문은 reveal로 한 번 받고, 볼 때마다 감사 기록(무엇을 봤는지만)이 남는다. 질문 검색·고객 자료·LLM에는 넣지 않는다.
+
+- owner: `{id, name, relation, memo, phone (가림), has_phone, privacy_consent_at}`
+- mandate: `{owner, kind: "general"|"exclusive", starts_on, ends_on, days_left, price_flex, move_out, occupancy: "vacant"|"owner"|"tenant", tenant_phone (가림), has_tenant_phone, visit_rule, has_access, updated_by, updated_at}`
+- `GET /listings/{id}/mandate` → `{mandate | null, can_edit}` (사무소 누구나 봄)
+- `PUT /listings/{id}/mandate` `{owner_id | owner: {name, phone?, relation?, memo?, privacy_consent?}, kind, starts_on?, ends_on?, price_flex?, move_out?, occupancy, tenant_phone?, visit_rule?, access?, clear_access?}` → `{mandate, can_edit}`. 매물 담당·관리자만. `tenant_phone`·`access`는 새 값을 적을 때만(비우면 유지)
+- `DELETE /listings/{id}/mandate` → `{deleted}` (의뢰인 기록은 남음)
+- `POST /listings/{id}/mandate/reveal` `{field: "owner_phone"|"tenant_phone"|"access"}` → `{value}`
+- `GET /owners?q=` → `[owner + {listings}]` · `PUT /owners/{id}` `{name, phone?, clear_phone?, relation?, memo?, privacy_consent?}` (관리자·등록한 사람·그 의뢰인 매물의 담당)
 
 ## 고객
 
-customer: `{id, name, deal_type, phone, agent_id, agent_name, budget_max, area_min, district, station_walk_max, preferences: [str], first_home, top_stage | null, active_deals, created_at}`
+customer: `{id, name, deal_type, phone (가림 표시 | null), has_phone, phone_hidden, privacy_consent_at, agent_id, agent_name, budget_max, monthly_rent_max, area_min, district, station_walk_max, preferences: [str], first_home, top_stage | null, active_deals, created_at}`
 
+- `deal_type`: 매수 · 전세 · 월세 (예전 자유 입력 '아파트 매수'도 읽는다). 전세·월세 고객의 `budget_max`는 보증금 한도, `monthly_rent_max`는 월세 한도. 맞는 매물은 그 거래 종류로 내놓은 매물만
+- 연락처는 암호문으로 저장. `phone_hidden`: 사무소 설정상 이 사람에게는 보이지 않음
 - `GET /customers?mine=true` → `[customer]`
 - `GET /customers/{id}` → `{customer, deals: [deal], reports: [report_summary], activities: [{at, text, user_name}]}`
-- `POST /customers` (201) `{name, deal_type?, phone?, budget_max?, area_min?, district?, station_walk_max?, preferences?, first_home?}` → customer (담당 = 등록한 사람)
+- `POST /customers/{id}/phone` → `{phone}` (원문, 감사 기록. 숨김 대상이면 403)
+- `POST /customers` (201) `{name, deal_type?, phone?, budget_max?, monthly_rent_max?, area_min?, district?, station_walk_max?, preferences?, first_home?, privacy_consent?}` → customer (담당 = 등록한 사람). 수정 때 `phone`은 새 번호를 적을 때만(비우면 유지, 지우려면 `clear_phone: true`)
 - `PUT /customers/{id}` 같은 입력 → `{customer, warnings: [str]}` (조건 누락·충돌, 맞는 매물 없음 등)
 - `POST /customers/{id}/activities` `{text}` → activity (상담 메모)
 - `GET /customers/{id}/matches` → `{items: [listing]}` (고객 조건에 맞는 거래 중 매물, 사무소 전체)

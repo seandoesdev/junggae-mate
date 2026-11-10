@@ -3,7 +3,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { animate } from "animejs";
 import { NoteText, SrcRef } from "@/components/Notes";
-import { NOTE_TOKEN, STAGE_COLOR, STAGE_LABEL, eok } from "@/lib/format";
+import { NOTE_TOKEN, STAGE_COLOR, STAGE_LABEL, shortPrice } from "@/lib/format";
 import { reducedMotion } from "@/lib/motion";
 import { navigate } from "@/lib/router";
 import { useUser } from "@/state/session";
@@ -43,7 +43,7 @@ function TurnMap({ t }: { t: Turn }) {
     const ls = t.listings.filter((l) => l.lat && l.lng);
     ls.forEach((l) => {
       undo.push(map.addPin({ lat: l.lat!, lng: l.lng! },
-        `<div class="pin" data-s="${esc(l.stage)}" style="--c:${STAGE_COLOR[l.stage]}"><span>${esc(l.label)} ${eok(l.price)}</span></div>`,
+        `<div class="pin" data-s="${esc(l.stage)}" style="--c:${STAGE_COLOR[l.stage]}"><span>${esc(l.label)} ${esc(shortPrice(l))}</span></div>`,
         { title: `${l.label} ${l.title}`, onClick: () => navigate(`#/map/l/${l.id}`) }).remove);
     });
     // 매물이 있으면 매물에 맞추고(질문한 지역 반경 포함), 없으면 질문한 지역에 맞춘다
@@ -100,7 +100,7 @@ export function TurnView({ t, slot, compact }: { t: Turn; slot: Slot; compact: b
                   return (
                     <li key={l.id}>
                       <a href={`#/map/l/${l.id}`} style={{ ["--c" as string]: l.stage === "available" ? "var(--line)" : STAGE_COLOR[l.stage] }}>
-                        <span className="tl-name"><b>{l.label}</b> {l.title}</span><span className="tl-price num">{eok(l.price)}</span>
+                        <span className="tl-name"><b>{l.label}</b> {l.title}</span><span className="tl-price num">{shortPrice(l)}</span>
                         <span className="tl-why">{why || `${l.district} · 전용 ${l.area_m2}㎡ · ${STAGE_LABEL[l.stage]}`}</span>
                       </a>
                     </li>

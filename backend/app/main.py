@@ -8,7 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 
-from . import db
+from . import db, vault
 from .api import public, router
 from .audit import request_id_var
 from .config import settings
@@ -34,6 +34,10 @@ async def lifespan(_: FastAPI):
     db.init_schema()
     if settings.seed_on_start:
         seed()
+    with db.tx() as conn:
+        vault.migrate_plain_phones(conn)
+    if vault.uses_derived_key():
+        log.warning("DATA_ENCRYPTION_KEY가 비어 있어 JWT_SECRET에서 파생한 키로 연락처를 암호화합니다. 운영에서는 키를 따로 두세요.")
     log.info("중개메이트 API 준비 완료 (llm=%s)", settings.llm_provider)
     yield
     db.pool.close()

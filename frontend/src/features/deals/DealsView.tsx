@@ -9,7 +9,7 @@ import { FunnelChart } from "@/components/charts/funnel-chart";
 import { StageTag } from "@/components/Stage";
 import { api } from "@/lib/api";
 import { countUp, drawIn } from "@/lib/anime";
-import { STAGES, STAGE_COLOR, STAGE_LABEL, eok, stageIdx } from "@/lib/format";
+import { STAGES, STAGE_COLOR, STAGE_LABEL, priceText, stageIdx } from "@/lib/format";
 import { SPRING_SNAPPY, press } from "@/lib/motion";
 import { navigate } from "@/lib/router";
 import { useUser } from "@/state/session";
@@ -27,7 +27,7 @@ type Deal = {
   next_action: string | null;
   dropped_reason: string | null;
   days_in_stage: number;
-  listing: { id: number; label: string; title: string; price: number | null; agent_id: number; agent_name: string };
+  listing: { id: number; label: string; title: string; price: number | null; price_text?: string; agent_id: number; agent_name: string };
 };
 type StageResult = { deal: Deal; warnings: string[] };
 type Scope = "mine" | "all";
@@ -168,7 +168,7 @@ export default function DealsView(_: ViewProps) {
                       </div>
                       <button type="button" className="btn--link" style={{ textAlign: "left" }} data-act="open"
                         onClick={() => navigate(`#/map/l/${d.listing_id}`)}>
-                        {d.listing.label} {d.listing.title} · {eok(d.listing.price)}
+                        {d.listing.label} {d.listing.title} · {d.listing.price_text ?? priceText(d.listing)}
                       </button>
                       <div className="next">{d.next_action || ""}</div>
                       <div className="acts">

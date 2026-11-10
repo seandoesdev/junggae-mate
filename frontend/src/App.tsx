@@ -20,6 +20,7 @@ const VIEWS: Record<Page, ComponentType<ViewProps>> = {
   customers: lazy(() => import("@/features/customers/CustomersView")),
   library: lazy(() => import("@/features/library/LibraryView")),
   public: lazy(() => import("@/features/public/PublicView")),
+  office: lazy(() => import("@/features/office/OfficeView")),
   report: lazy(() => import("@/features/report/ReportView")),
 };
 const HoodPanel = lazy(() => import("@/features/hood/HoodPanel"));
@@ -30,7 +31,7 @@ function Shell() {
   const { close: closeSource } = useSources();
   const { closeDialog } = useUi();
   // 관리자 전용 화면은 관리자가 아니면 지도로
-  const page: Page = route.page === "public" && user?.role !== "admin" ? "map" : route.page;
+  const page: Page = (route.page === "public" || route.page === "office") && user?.role !== "admin" ? "map" : route.page;
   const View = VIEWS[page];
 
   useEffect(() => {

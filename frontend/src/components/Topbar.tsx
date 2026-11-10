@@ -41,6 +41,7 @@ export function Topbar({ page }: { page: Page }) {
         {link("customers", "고객")}
         {link("library", "자료실")}
         {user.role === "admin" && link("public", "공공데이터")}
+        {user.role === "admin" && link("office", "사무소")}
       </nav>
       <span className="me">
         <motion.button

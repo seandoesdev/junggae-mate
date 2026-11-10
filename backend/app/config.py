@@ -32,6 +32,8 @@ class Settings:
     # 네이버 클라우드 Maps 애플리케이션의 Client ID. 화면의 지도 스크립트(ncpKeyId)에 그대로 실리는 공개 값이다.
     # 짝인 NAVER_CLIENT_SECRET은 서버 전용 REST API(지오코딩 등)용이라 화면에 내보내지 않는다
     naver_client_id: str = os.getenv("NAVER_CLIENT_ID", "").strip()
+    # 연락처·출입 정보 암호화 키 (Fernet). 비우면 JWT_SECRET에서 파생한 키를 쓴다 (vault.py)
+    data_encryption_key: str = os.getenv("DATA_ENCRYPTION_KEY", "").strip()
 
 
 settings = Settings()
