@@ -3,7 +3,7 @@ import logging
 from datetime import date
 
 from . import public_sources as ps
-from . import rag
+from . import rag, vault
 from .db import tx
 from .security import hash_password
 
@@ -33,6 +33,29 @@ LISTINGS_T1 = [
     ("J", "용강리버뷰 59", "용강리버뷰", 83000, 59.9, "20/25층", "마포역", 6, 4, 37.5385, 126.9420, "kim", []),
     ("K", "공덕자이 74", "공덕자이", 99000, 74.5, "8/21층", "공덕역", 3, 10, 37.5432, 126.9555, "park", []),
     ("L", "마포한신 52", "마포한신", 64000, 52.0, "6/12층", "애오개역", 9, 6, 37.5515, 126.9500, "lee", []),
+]
+# 전월세·다른 유형 매물 (만원). label, title, 유형, 단지·건물, 전세 보증금, 월세 보증금, 월세, 전용, 공급, 방, 욕실, 층,
+# 역, 도보, 공원, lat, lng, 담당, 관리비, 입주, 설명
+RENTALS_T1 = [
+    ("M", "공덕래미안 전세 59", "apartment", "공덕래미안", 52000, None, None, 59.9, 84.0, 3, 2, "8/20층", "공덕역", 6, 7,
+     37.5440, 126.9540, "park", 25, "2026-12-20 이후", "전세. 남향, 2024년 도배·장판. 전세대출 가능."),
+    ("N", "도화하이빌 전세", "villa", "도화하이빌", 28000, None, None, 49.5, 62.0, 2, 1, "3/5층", "마포역", 8, 5,
+     37.5410, 126.9480, "lee", 5, "즉시", "빌라 전세. 2015년 준공, 주차 1대. 근저당 없다고 함(등기 확인 필요)."),
+    ("O", "공덕파크텔 월세", "officetel", "공덕파크텔", None, 1000, 75, 26.4, 52.0, 1, 1, "11/18층", "공덕역", 2, 10,
+     37.5452, 126.9512, "kim", 12, "협의", "원룸형 오피스텔. 풀옵션, 관리비에 인터넷 포함."),
+    ("P", "염리동 투룸 월세", "villa", "염리그린빌", None, 3000, 90, 39.6, 48.0, 2, 1, "2/4층", "대흥역", 9, 6,
+     37.5500, 126.9450, "lee", 7, "2026-12-01", "투룸 빌라. 2019년 수리. 반려동물 협의."),
+]
+# 매물 → (의뢰인, 연락처, 일반/전속, 의뢰 만료일, 거주 상태, 세입자 연락처, 방문 안내, 출입 정보). 모두 가상의 값
+MANDATES_T1 = {
+    "A": ("최영호", "010-0000-1111", "exclusive", "2026-12-31", "tenant", "010-0000-2222",
+          "평일 18시 이후, 하루 전 세입자에게 연락", "공동현관 1234* (샘플)"),
+    "N": ("윤미경", "010-0000-3333", "general", None, "vacant", None, "언제든 가능, 열쇠는 사무소 보관", "열쇠: 사무소 금고 (샘플)"),
+}
+# 전세·월세 고객: 이름, 담당, 연락처, 거래 종류, 보증금 한도, 월세 한도, 최소 전용, 역 도보, 원하는 점
+RENT_CUSTOMERS_T1 = [
+    ("정다은", "park", "010-0000-4444", "전세", 30000, None, 45, 10, ["역세권"]),
+    ("한지훈", "kim", "010-0000-5555", "월세", 3000, 80, 20, 10, []),
 ]
 # 매물 설명 (중개사가 등록할 때 적는 내용, 샘플)
 DESCRIPTIONS = {
@@ -235,6 +258,37 @@ def seed() -> None:
                 for p, at in hist or [(price, "2026-10-01")]:
                     conn.execute("INSERT INTO listing_price_history (listing_id, price, changed_at) VALUES (%s,%s,%s)", (lid, p, at))
 
+        # 전월세·다른 매물 유형 샘플 (PRD 1단계). L은 매매와 전세를 함께 내놓은 매물
+        for i, (label, title, ptype, cx, jeonse, mdep, mrent, area, supply, rooms, baths, floor, st, walk, park, lat, lng,
+                agent, fee, move_in, desc) in enumerate(RENTALS_T1):
+            lid = conn.execute(
+                """INSERT INTO listings (tenant_id, agent_id, label, title, property_type, complex_name, address, district,
+                                         jeonse_deposit, monthly_deposit, monthly_rent, area_m2, supply_m2, rooms, baths, floor,
+                                         station, station_walk_min, park_walk_min, lat, lng, maintenance_fee, move_in,
+                                         description, source, source_date, created_at)
+                   VALUES (%s,%s,%s,%s,%s,%s,%s,'마포구',%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,
+                           '중개사 직접 등록 (샘플)','2026-10-28',%s) RETURNING id""",
+                (t1, users[agent], label, title, ptype, cx, f"서울 마포구 {cx}길 {20 + i}", jeonse, mdep, mrent, area, supply,
+                 rooms, baths, floor, st, walk, park, lat, lng, fee, move_in, desc + " (시연용 샘플 매물)",
+                 f"2026-10-{20 + i:02d} 10:00+09")).fetchone()["id"]
+            ids[(t1, label)] = lid
+            conn.execute("INSERT INTO listing_price_history (listing_id, price, changed_at) VALUES (%s,%s,'2026-10-20')",
+                         (lid, jeonse if jeonse is not None else mdep))
+        conn.execute("UPDATE listings SET jeonse_deposit = 38000, maintenance_fee = 18, move_in = '2027-01 이후' WHERE id = %s",
+                     (ids[(t1, "L")],))
+        # 의뢰인·의뢰 조건 샘플 (연락처·출입 정보는 암호문으로만 저장)
+        for label, (oname, ophone, kind, ends, occupancy, tphone, rule, access) in MANDATES_T1.items():
+            oid = conn.execute(
+                """INSERT INTO owners (tenant_id, name, phone_enc, phone_last4, relation, privacy_consent_at, created_by)
+                   VALUES (%s,%s,%s,%s,'본인','2026-10-20 10:00+09',%s) RETURNING id""",
+                (t1, oname, vault.seal(ophone), vault.last4(ophone), users["kim"])).fetchone()["id"]
+            conn.execute(
+                """INSERT INTO mandates (listing_id, tenant_id, owner_id, kind, starts_on, ends_on, occupancy, tenant_phone_enc,
+                                         tenant_phone_last4, visit_rule, access_enc, updated_by)
+                   VALUES (%s,%s,%s,%s,'2026-10-20',%s,%s,%s,%s,%s,%s,%s)""",
+                (ids[(t1, label)], t1, oid, kind, ends, occupancy, vault.seal(tphone), vault.last4(tphone), rule,
+                 vault.seal(access), users["kim"]))
+
         for label, agent, text in NOTES:
             conn.execute("INSERT INTO listing_notes (listing_id, user_id, text, created_at) VALUES (%s,%s,%s,'2026-10-28 18:00+09')",
                          (ids[(t1, label)], users[agent], text))
@@ -246,6 +300,12 @@ def seed() -> None:
                                           station_walk_max, preferences, first_home, created_at)
                    VALUES (%s,%s,%s,'아파트 매수',%s,%s,%s,'마포구',%s,%s,%s,'2026-10-15 10:00+09') RETURNING id""",
                 (t1, users[agent], name, phone, budget, area_min, walk, prefs, first_home)).fetchone()["id"]
+        for name, agent, phone, deal_type, budget, rent_max, area_min, walk, prefs in RENT_CUSTOMERS_T1:
+            cust[name] = conn.execute(
+                """INSERT INTO customers (tenant_id, agent_id, name, deal_type, phone, budget_max, monthly_rent_max, area_min,
+                                          district, station_walk_max, preferences, privacy_consent_at, created_at)
+                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s,'마포구',%s,%s,'2026-10-20 10:00+09','2026-10-20 10:00+09') RETURNING id""",
+                (t1, users[agent], name, deal_type, phone, budget, rent_max, area_min, walk, prefs)).fetchone()["id"]
         other_c = conn.execute(
             """INSERT INTO customers (tenant_id, agent_id, name, deal_type, budget_max, area_min, district)
                VALUES (%s,%s,'이도윤','아파트 매수',70000,59,'서대문구') RETURNING id""", (t2, users["other"])).fetchone()["id"]

@@ -33,7 +33,7 @@ def run():
 
         # ── 지도: 내 매물, 단계 색 핀 ──
         pins = page.locator("#map .pin")
-        expect(pins).to_have_count(6, timeout=15000)
+        expect(pins).to_have_count(7, timeout=15000)
         body = page.inner_text("body").replace("Hood AI", "")  # 제품 메뉴 이름 'Hood AI'만 예외 (화면 문구에 'AI' 딱지는 쓰지 않는다)
         for word in ("AI", "/advise", "/ask", "근거 확인"):
             assert word not in body, f"'{word}'가 화면에 보임"
@@ -60,11 +60,20 @@ def run():
 
         # 범위·단계 필터
         page.click("#view-map [data-scope=all]")
-        expect(pins).to_have_count(12)
+        expect(pins).to_have_count(16)
         page.click('#stage-filter [data-s="available"]')
-        assert pins.count() < 12
+        assert pins.count() < 16
         page.click('#stage-filter [data-s="available"]')
-        expect(pins).to_have_count(12)
+        expect(pins).to_have_count(16)
+        # 거래 종류 필터: 전세로 내놓은 매물만 (L 매매·전세, M, N), 핀에는 전세 금액
+        page.click('#deal-filter [data-deal="jeonse"]')
+        expect(pins).to_have_count(3)
+        expect(pins.filter(has_text="M 전 5.2억")).to_have_count(1)
+        page.click('#deal-filter [data-deal="monthly"]')
+        expect(pins).to_have_count(2)
+        expect(pins.filter(has_text="O 월 1,000만/75")).to_have_count(1)
+        page.click('#deal-filter [data-deal=""]')
+        expect(pins).to_have_count(16)
 
         # 지도 클릭으로 매물 등록 → 거래 종료
         page.click("#map-side [data-act=back]")
@@ -78,10 +87,40 @@ def run():
             form.locator(f"[name={name}]").fill(value)
         form.locator("[type=submit]").click()
         expect(side).to_contain_text("E2E 등록 59", timeout=10000)
-        expect(pins).to_have_count(13)
+        expect(pins).to_have_count(17)
         page.once("dialog", lambda d: d.accept())
         page.click("#listing-close-btn")
-        expect(pins).to_have_count(12, timeout=10000)
+        expect(pins).to_have_count(16, timeout=10000)
+
+        # 빌라 전세 등록: 매매를 끄고 전세를 고른다. 빌라는 단지 이름 없이도 된다
+        page.click("[data-act=register]")
+        page.mouse.click(box["x"] + box["width"] - 120, box["y"] + 160)
+        expect(form.locator("[name=lat]")).not_to_have_value("")
+        form.locator("[name=property_type]").select_option("villa")
+        form.locator('#deal-pick [data-deal="sale"]').click()
+        form.locator('#deal-pick [data-deal="jeonse"]').click()
+        for name, value in {"title": "E2E 빌라 전세", "address": "서울 마포구 테스트로 2", "jeonse_deposit": "24000",
+                            "area_m2": "45", "maintenance_fee": "5", "move_in": "즉시"}.items():
+            form.locator(f"[name={name}]").fill(value)
+        form.locator("[type=submit]").click()
+        expect(side.locator(".price")).to_have_text("전세 2.4억", timeout=10000)
+        expect(side).to_contain_text("관리비")
+        page.once("dialog", lambda d: d.accept())
+        page.click("#listing-close-btn")
+        expect(pins).to_have_count(16, timeout=10000)
+
+        # 의뢰인·방문 안내: 연락처·출입 정보는 가림 표시, [보기]를 눌러야 원문
+        page.evaluate("location.hash = '#/map/l/1'")
+        mandate = side.locator("#mandate-sec")
+        expect(mandate).to_contain_text("최영호", timeout=10000)
+        expect(mandate).to_contain_text("***-****-1111")
+        expect(mandate).to_contain_text("전속 중개")
+        assert "1234*" not in mandate.inner_text()
+        mandate.locator('[data-act="reveal"][data-field="owner_phone"]').click()
+        expect(mandate.locator('[data-secret="owner_phone"]')).to_have_text("010-0000-1111", timeout=10000)
+        mandate.locator('[data-act="reveal"][data-field="access"]').click()
+        expect(mandate.locator('[data-secret="access"]')).to_contain_text("1234*", timeout=10000)
+        page.evaluate("location.hash = '#/map'")
 
         # ── 상단 질문창은 없다. Hood Chat(지도 왼쪽 메뉴)에서 묻고 '지도에서 보기'로 맞는 매물을 지도에 강조 ──
         assert page.locator("#ask-trigger, #ask-layer").count() == 0
@@ -244,6 +283,11 @@ def run():
         page.locator("#customer-list").get_by_text("김하늘", exact=True).click()
         expect(page.locator("#customer-detail h1")).to_contain_text("김하늘", timeout=10000)
         page.screenshot(path=str(IMAGES / "app-customer.png"))
+        # 연락처는 끝 4자리만, [보기]로 원문 (감사 기록)
+        meta = page.locator("#customer-detail .meta")
+        expect(meta).to_contain_text("***-****-")
+        meta.locator('[data-act="reveal-phone"]').click()
+        expect(meta.locator('a[href^="tel:"]')).to_be_visible(timeout=10000)
         page.click("[data-act=new-compare]")
         paper = page.locator(".paper")
         expect(paper).to_be_visible(timeout=15000)
@@ -335,6 +379,29 @@ def run():
         assert "serviceKey" not in page.locator("#view-public").inner_text()
         sw = page.evaluate("[document.documentElement.scrollWidth, document.documentElement.clientWidth]")
         assert sw[0] <= sw[1], f"모바일 가로 넘침 #/public: {sw}"
+
+        # 사무소 관리: 계정 추가 → 정지(담당 고객·매물 인계) → 다시 사용, 연락처 공개 범위 설정
+        page.click('[data-nav="office"]')
+        users = page.locator("#office-users tr[data-user]")
+        expect(users).to_have_count(4, timeout=10000)
+        nf = page.locator("#new-user-form")
+        nf.locator("[name=name]").fill("E2E 중개사")
+        nf.locator("[name=email]").fill("e2e-agent@hanul.test")
+        nf.locator("[name=password]").fill("e2e-agent-1")
+        nf.locator("[type=submit]").click()
+        expect(users).to_have_count(5, timeout=10000)
+        row = users.filter(has_text="E2E 중개사")
+        row.locator('[data-act="disable-user"]').click()
+        page.click('[data-act="disable-ok"]')
+        expect(row).to_contain_text("정지", timeout=10000)
+        row.locator('[data-act="enable-user"]').click()
+        expect(row).to_contain_text("사용 중", timeout=10000)
+        page.click("#contact-owner-only")            # 저장 응답이 온 뒤 체크 표시가 바뀐다
+        expect(page.locator("#contact-owner-only")).to_be_checked(timeout=10000)
+        page.click("#contact-owner-only")
+        expect(page.locator("#contact-owner-only")).not_to_be_checked(timeout=10000)
+        sw = page.evaluate("[document.documentElement.scrollWidth, document.documentElement.clientWidth]")
+        assert sw[0] <= sw[1], f"모바일 가로 넘침 #/office: {sw}"
 
         # 관리자 지도 기본 범위는 사무소 전체이고, 공공데이터 오류는 재시도 상태로 바뀐다
         expected_error_at = len(errors)

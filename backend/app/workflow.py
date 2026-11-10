@@ -29,7 +29,8 @@ _DEAL_SQL = """
 SELECT d.id, d.listing_id, d.customer_id, c.name AS customer_name, d.agent_id, ua.name AS agent_name, d.stage,
        d.next_action, d.dropped_reason, d.stage_changed_at, d.created_at,
        (current_date - d.stage_changed_at::date) AS days_in_stage,
-       l.label AS l_label, l.title AS l_title, l.price AS l_price, l.agent_id AS l_agent_id, ul.name AS l_agent_name
+       l.label AS l_label, l.title AS l_title, l.price AS l_price, l.agent_id AS l_agent_id, ul.name AS l_agent_name,
+       l.jeonse_deposit AS l_jeonse, l.monthly_deposit AS l_mdep, l.monthly_rent AS l_mrent
 FROM deals d
 JOIN customers c ON c.id = d.customer_id
 JOIN listings l ON l.id = d.listing_id
@@ -48,7 +49,9 @@ def _deal(row: dict) -> dict:
         "days_in_stage": row["days_in_stage"], "stage_changed_at": row["stage_changed_at"].isoformat(),
         "created_at": row["created_at"].isoformat(),
         "listing": {"id": row["listing_id"], "label": row["l_label"], "title": row["l_title"], "price": row["l_price"],
-                    "agent_id": row["l_agent_id"], "agent_name": row["l_agent_name"]},
+                    "agent_id": row["l_agent_id"], "agent_name": row["l_agent_name"],
+                    "price_text": drafting.price_text({"price": row["l_price"], "jeonse_deposit": row["l_jeonse"],
+                                                       "monthly_deposit": row["l_mdep"], "monthly_rent": row["l_mrent"]})},
     }
 
 
@@ -144,7 +147,7 @@ def listing_checks(conn, user, listing: dict) -> list[dict]:
     hits = _find(conn, user.tenant_id, "생애최초 주택 구입 지원 대상 주택가격 시행일", region, types={"policy", "news"})
     gate = rag.evidence_gate(hits, as_of=date.today(), policy_question=True)
     policy = [h for h in hits if h["source_type"] == "policy" and "주택가격" in h["text"]]
-    if policy:
+    if policy and listing.get("price") is not None:  # 생애최초 구입 지원은 매매 매물에만
         under = listing["price"] <= drafting.FIRST_HOME_PRICE_LIMIT
         add("first_home", "주택가격 9억 원 이하: 생애최초 구입 지원 가격 기준 해당 (소득·무주택 요건은 별도)" if under
             else "주택가격 9억 원 초과: 생애최초 구입 지원 가격 기준 밖", "normal", policy[:1], gate["evidence"])
@@ -334,7 +337,7 @@ def render_html(report: dict, office: str, *, print_on_load: bool) -> str:
     table = ""
     if report["listings"]:
         ls = report["listings"]
-        rows = [("매도 희망가", lambda l: drafting.eok(l["price"])),
+        rows = [("금액", lambda l: e(drafting.price_text(l))),
                 ("전용면적 / 층", lambda l: f"{l['area_m2']:g}㎡ / {e(l.get('floor') or '-')}"),
                 ("교통", lambda l: e(l.get("station") or "-")
                  + (f" 도보 {l['station_walk_min']}분" if l.get("station_walk_min") is not None else "")),

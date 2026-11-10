@@ -1,7 +1,7 @@
 /* 해시 주소(#/map, #/ai/usage, #/customers/3 …)를 예전과 똑같이 쓴다. */
 import { useSyncExternalStore } from "react";
 
-export const PAGES = ["map", "ai", "deals", "customers", "library", "public", "report"] as const;
+export const PAGES = ["map", "ai", "deals", "customers", "library", "public", "office", "report"] as const;
 export type Page = (typeof PAGES)[number];
 
 export type Route = { page: Page; a?: string; b?: string; hash: string };

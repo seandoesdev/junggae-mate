@@ -34,10 +34,75 @@ def region_of(district: str | None) -> str | None:
     return f"{CITY} {district}" if district else None
 
 
+# ---------- 거래 종류·금액 (매매가 / 전세 보증금 / 월세 보증금·월세, 만원) ----------
+
+DEAL_LABEL = {"sale": "매매", "jeonse": "전세", "monthly": "월세"}
+PROPERTY_LABEL = {"apartment": "아파트", "officetel": "오피스텔", "villa": "빌라", "house": "단독·다가구",
+                  "oneroom": "원룸", "commercial": "상가·사무실"}
+AMOUNT_SQL = "COALESCE(l.price, l.jeonse_deposit, l.monthly_deposit)"
+
+
+def won(v: int | None) -> str:
+    """만원 금액 표기: 1억 이상은 '3.2억', 미만은 '5,000만'"""
+    if v is None:
+        return "-"
+    return eok(v) if v >= 10000 else f"{v:,}만"
+
+
+def offers(l: dict) -> list[str]:
+    """매물이 내놓은 거래 종류. 예전 고객 자료 스냅숏(price만 있음)도 그대로 읽힌다"""
+    out = []
+    if l.get("price") is not None:
+        out.append("sale")
+    if l.get("jeonse_deposit") is not None:
+        out.append("jeonse")
+    if l.get("monthly_deposit") is not None and l.get("monthly_rent") is not None:
+        out.append("monthly")
+    return out
+
+
+def amount(l: dict, mode: str) -> int | None:
+    return {"sale": l.get("price"), "jeonse": l.get("jeonse_deposit"), "monthly": l.get("monthly_deposit")}.get(mode)
+
+
+def primary_amount(l: dict) -> int | None:
+    return next((amount(l, m) for m in offers(l)), None)
+
+
+def price_text(l: dict, mode: str | None = None) -> str:
+    """'매매 9.2억 · 전세 5억' / mode를 주면 그 종류만 ('월세 5,000만/120')"""
+    modes = [mode] if mode and mode in offers(l) else offers(l)
+    parts = []
+    for m in modes:
+        if m == "monthly":
+            parts.append(f"월세 {won(l['monthly_deposit'])}/{l['monthly_rent']}")
+        else:
+            parts.append(f"{DEAL_LABEL[m]} {won(amount(l, m))}")
+    return " · ".join(parts) or "-"
+
+
+def customer_mode(deal_type: str | None) -> str:
+    """고객의 거래 종류(자유 입력 '아파트 매수' 등) → sale | jeonse | monthly"""
+    t = deal_type or ""
+    if "월세" in t:
+        return "monthly"
+    if "전세" in t or "임차" in t:
+        return "jeonse"
+    return "sale"
+
+
+def station_text(l: dict) -> str | None:
+    if not l.get("station"):
+        return None
+    return f"{l['station']} 도보 {l['station_walk_min']}분" if l.get("station_walk_min") is not None else f"{l['station']} 인근"
+
+
 # ---------- 매물 (구조화 사실) ----------
 
 STAGE_ORDER_SQL = "array_position(ARRAY['intro','visit','nego','contract','done'], d.stage)"
 _LISTING_COLS = f"""l.id, l.label, l.title, l.complex_name, l.address, l.district, l.price, l.area_m2::float AS area_m2,
+    l.jeonse_deposit, l.monthly_deposit, l.monthly_rent, l.property_type, l.supply_m2::float AS supply_m2, l.rooms, l.baths,
+    l.facing, l.maintenance_fee, l.maintenance_note, l.parking, l.move_in, l.loan_amount,
     l.floor, l.station, l.station_walk_min, l.park_walk_min, l.lat, l.lng, l.description, l.source, l.source_date,
     l.status, l.agent_id, u.name AS agent_name, l.created_at,
     COALESCE((SELECT d.stage FROM deals d WHERE d.listing_id = l.id AND d.stage <> 'dropped'
@@ -51,13 +116,16 @@ def _serialize_listing(row: dict, history: list[dict], user_id: int | None) -> d
     out["created_at"] = row["created_at"].isoformat()
     out["mine"] = user_id is not None and row["agent_id"] == user_id
     out["price_history"] = [{"price": h["price"], "changed_at": str(h["changed_at"])} for h in history]
+    out["deal_types"] = offers(out)
+    out["price_text"] = price_text(out)
     return out
 
 
 def fetch_listings(conn, tenant_id: int, *, ids: list[int] | None = None, district: str | None = None,
                    max_price: int | None = None, min_area: float | None = None,
                    max_station_walk: int | None = None, sort: str = "price", user_id: int | None = None,
-                   mine: bool = False, include_closed: bool = False) -> list[dict]:
+                   mine: bool = False, include_closed: bool = False, deal: str | None = None) -> list[dict]:
+    """deal: sale | jeonse | monthly — 그 거래 종류로 내놓은 매물만, max_price는 그 종류의 금액(매매가·보증금)에 적용"""
     where, params = ["l.tenant_id = %s"], [tenant_id]
     if not include_closed:
         where.append("l.status = 'active'")
@@ -70,8 +138,11 @@ def fetch_listings(conn, tenant_id: int, *, ids: list[int] | None = None, distri
     if district:
         where.append("l.district = %s")
         params.append(district)
+    amount_col = {"sale": "l.price", "jeonse": "l.jeonse_deposit", "monthly": "l.monthly_deposit"}.get(deal or "", "l.price")
+    if deal:
+        where.append(f"{amount_col} IS NOT NULL" + (" AND l.monthly_rent IS NOT NULL" if deal == "monthly" else ""))
     if max_price is not None:
-        where.append("l.price <= %s")
+        where.append(f"{amount_col} <= %s")
         params.append(max_price)
     if min_area is not None:
         where.append("l.area_m2 >= %s")
@@ -79,7 +150,7 @@ def fetch_listings(conn, tenant_id: int, *, ids: list[int] | None = None, distri
     if max_station_walk is not None:
         where.append("l.station_walk_min <= %s")
         params.append(max_station_walk)
-    order = "l.created_at DESC, l.id DESC" if sort == "recent" else "l.price, l.id"
+    order = "l.created_at DESC, l.id DESC" if sort == "recent" else f"{AMOUNT_SQL}, l.id"
     rows = conn.execute(f"SELECT {_LISTING_COLS} FROM listings l LEFT JOIN users u ON u.id = l.agent_id "
                         f"WHERE {' AND '.join(where)} ORDER BY {order}", params).fetchall()
     if not rows:
@@ -106,10 +177,23 @@ def next_label(conn, tenant_id: int) -> str:
 
 
 def condition_checks(listing: dict, cond: dict) -> list[dict]:
+    """cond: 고객 조건(deal_type·budget_max·monthly_rent_max·area_min·district·station_walk_max).
+    deal_type이 있으면 그 거래 종류로 내놓은 매물인지 보고, 예산은 그 종류의 금액(매매가·보증금)과 비교한다."""
     checks = []
-    if cond.get("budget_max"):
-        ok = listing["price"] <= cond["budget_max"]
-        checks.append({"condition": "예산", "ok": ok, "detail": f"{eok(listing['price'])} (예산 {eok(cond['budget_max'])})"})
+    have = offers(listing)
+    mode = customer_mode(cond["deal_type"]) if cond.get("deal_type") else (have[0] if have else "sale")
+    if mode not in have:
+        checks.append({"condition": "거래 종류", "ok": False, "detail": f"{DEAL_LABEL[mode]} 아님 ({price_text(listing)})"})
+    else:
+        if cond.get("budget_max"):
+            amt = amount(listing, mode)
+            label = "예산" if mode == "sale" else "보증금"
+            checks.append({"condition": label, "ok": amt <= cond["budget_max"],
+                           "detail": f"{DEAL_LABEL[mode]} {won(amt)} ({label} {won(cond['budget_max'])})"})
+        if mode == "monthly" and cond.get("monthly_rent_max"):
+            rent = listing["monthly_rent"]
+            checks.append({"condition": "월세", "ok": rent <= cond["monthly_rent_max"],
+                           "detail": f"월 {rent}만 원 (기준 {cond['monthly_rent_max']}만 원)"})
     if cond.get("area_min"):
         ok = listing["area_m2"] >= float(cond["area_min"])
         checks.append({"condition": "면적", "ok": ok, "detail": f"전용 {listing['area_m2']:g}㎡ (기준 {float(cond['area_min']):g}㎡ 이상)"})
@@ -158,7 +242,8 @@ def condition_warnings(conn, tenant_id: int, cond: dict) -> list[str]:
         warnings.append(f"'역세권'과 역 도보 {cond['station_walk_max']}분 조건이 서로 맞지 않습니다.")
     if cond.get("budget_max") and cond.get("district"):
         found = fetch_listings(conn, tenant_id, district=cond["district"], max_price=cond["budget_max"],
-                               min_area=cond.get("area_min"), max_station_walk=cond.get("station_walk_max"))
+                               min_area=cond.get("area_min"), max_station_walk=cond.get("station_walk_max"),
+                               deal=customer_mode(cond.get("deal_type")))
         if not found:
             warnings.append("지금 조건을 모두 만족하는 매물이 없습니다. 예산·면적·역 거리 중 하나를 조정해 보세요.")
     return warnings
@@ -167,10 +252,14 @@ def condition_warnings(conn, tenant_id: int, cond: dict) -> list[str]:
 # ---------- 출처 (매물·실거래가) ----------
 
 def listing_evidence(l: dict) -> dict:
-    snippet = (f"매도 희망가 {eok(l['price'])}, 전용 {l['area_m2']:g}㎡, {l.get('floor') or '-'}, "
-               f"{l['station']} 도보 {l['station_walk_min']}분, 공원 도보 {l['park_walk_min']}분. {l['address']}")
-    if len(l["price_history"]) > 1:
-        snippet += " 가격 이력: " + " → ".join(f"{eok(h['price'])}({h['changed_at']})" for h in l["price_history"])
+    bits = [PROPERTY_LABEL.get(l.get("property_type") or "apartment", "아파트"), price_text(l), f"전용 {l['area_m2']:g}㎡",
+            l.get("floor") or "-", station_text(l),
+            f"공원 도보 {l['park_walk_min']}분" if l.get("park_walk_min") is not None else None,
+            f"관리비 월 {l['maintenance_fee']}만 원" if l.get("maintenance_fee") is not None else None,
+            f"입주 {l['move_in']}" if l.get("move_in") else None]
+    snippet = ", ".join(b for b in bits if b) + f". {l['address']}"
+    if len(l.get("price_history") or []) > 1:
+        snippet += " 가격 이력: " + " → ".join(f"{won(h['price'])}({h['changed_at']})" for h in l["price_history"])
     return {"id": f"l{l['id']}", "kind": "listing", "type": "data", "type_label": "매물 정보",
             "title": f"{l['label']} {l['title']} 매물 정보", "org": f"{l['source']} · 담당 {l.get('agent_name') or '-'}",
             "date": l["source_date"], "effective_date": None, "location": f"매물 {l['label']}", "snippet": snippet,
@@ -336,6 +425,7 @@ def draft_compare(conn, user, customer: dict, listing_ids: list[int] | None) -> 
     region = region_of(customer.get("district"))
     prefs = customer.get("preferences") or []
     ls = compare_listings(conn, user, customer, listing_ids)
+    mode = customer_mode(customer.get("deal_type"))
     body = Body()
     snapshot = []
     # 1) 매물별 사실 (매물 정보·실거래가·학구도 메모)
@@ -348,13 +438,14 @@ def draft_compare(conn, user, customer: dict, listing_ids: list[int] | None) -> 
         snapshot.append({**l, "checks": checks, "trade_reference": ref, "public": structured.public_summary(fx)})
         unmet = [c["condition"] for c in checks if not c["ok"]]
         fit = "찾으시는 조건에 맞습니다." if not unmet else f"{'·'.join(unmet)} 조건과는 차이가 있습니다."
-        body.say(f"{l['label']} {l['title']}는 {eok(l['price'])}, 전용 {l['area_m2']:g}㎡로 {fit}", [lid])
-        body.say(f"{l['station']}까지 걸어서 {l['station_walk_min']}분입니다.", [lid])
+        body.say(f"{l['label']} {l['title']}는 {price_text(l, mode)}, 전용 {l['area_m2']:g}㎡로 {fit}", [lid])
+        if l.get("station") and l.get("station_walk_min") is not None:
+            body.say(f"{l['station']}까지 걸어서 {l['station_walk_min']}분입니다.", [lid])
         if "공원" in prefs and l.get("park_walk_min") is not None:
             body.say(f"공원까지 도보 {l['park_walk_min']}분{'으로 가깝습니다' if l['park_walk_min'] <= 5 else '입니다'}.", [lid])
         if len(l["price_history"]) > 1:
             first, last = l["price_history"][0], l["price_history"][-1]
-            body.say(f"가격이 {eok(first['price'])}에서 {josa(eok(last['price']), '으로')} 조정되었습니다"
+            body.say(f"가격이 {won(first['price'])}에서 {josa(won(last['price']), '으로')} 조정되었습니다"
                      f"({last['changed_at'][5:].replace('-', '/')}).", [lid])
         if fx["complex"]:
             v = fx["complex"]["value"]
@@ -377,7 +468,7 @@ def draft_compare(conn, user, customer: dict, listing_ids: list[int] | None) -> 
     generator = "template"
     if llm.is_enabled():
         context = f"고객 조건: {cond_summary(customer)}. 매물: " + "; ".join(
-            f"{l['label']} {l['title']} {eok(l['price'])} {l['area_m2']:g}㎡" for l in ls)
+            f"{l['label']} {l['title']} {price_text(l, mode)} {l['area_m2']:g}㎡" for l in ls)
         llm_body(body, "고객에게 보낼 매물 비교 의견 (중개사 1인칭, 존댓말, 사실마다 출처 id)", context)
         generator = "anthropic"
 
@@ -389,7 +480,7 @@ def draft_compare(conn, user, customer: dict, listing_ids: list[int] | None) -> 
         gate_status, gate_messages = gate["status"], gate["messages"]
         policy = [h for h in hits if h["source_type"] == "policy" and "주택가격" in h["text"]]
         if policy:
-            ok = [l["label"] for l in ls if l["price"] <= FIRST_HOME_PRICE_LIMIT]
+            ok = [l["label"] for l in ls if l.get("price") is not None and l["price"] <= FIRST_HOME_PRICE_LIMIT]
             if ok:
                 subject = "비교한 매물은 모두" if len(ok) == len(ls) else "·".join(ok) + "는"
                 body.say(f"{subject} 주택가격 9억 원 이하라 생애최초 구입 지원의 가격 기준에는 해당합니다.",

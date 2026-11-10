@@ -8,7 +8,24 @@ export type Listing = {
   complex_name: string;
   address: string;
   district: string;
-  price: number;
+  /** 매매가 (만원). 전세·월세만 내놓은 매물은 null */
+  price: number | null;
+  jeonse_deposit: number | null;
+  monthly_deposit: number | null;
+  monthly_rent: number | null;
+  /** 서버가 계산한 거래 종류·금액 표기 ("매매 9.2억 · 전세 5억") */
+  deal_types: ("sale" | "jeonse" | "monthly")[];
+  price_text: string;
+  property_type: string;
+  supply_m2: number | null;
+  rooms: number | null;
+  baths: number | null;
+  facing: string | null;
+  maintenance_fee: number | null;
+  maintenance_note: string | null;
+  parking: string | null;
+  move_in: string | null;
+  loan_amount: number | null;
   area_m2: number;
   floor: string | null;
   station: string | null;

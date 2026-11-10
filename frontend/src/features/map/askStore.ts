@@ -14,6 +14,8 @@ export const mapMemory = {
   scope: "mine" as "mine" | "all",
   scopeUser: null as number | null,
   hidden: new Set<string>(),
+  /** 거래 종류 필터 (null = 전체) */
+  deal: null as "sale" | "jeonse" | "monthly" | null,
 };
 
 export const getMapAsk = () => ask;
@@ -53,4 +55,5 @@ addEventListener(LOGOUT_EVENT, () => {
   mapMemory.scope = "mine";
   mapMemory.scopeUser = null;
   mapMemory.hidden.clear();
+  mapMemory.deal = null;
 });

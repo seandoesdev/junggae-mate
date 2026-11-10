@@ -7,7 +7,7 @@ import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from 
 import type { ViewProps } from "@/App";
 import { Prog, StageTag } from "@/components/Stage";
 import { api } from "@/lib/api";
-import { day, eok } from "@/lib/format";
+import { day, eok, priceText, won } from "@/lib/format";
 import { fadeIn, fadeUp } from "@/lib/motion";
 import { navigate } from "@/lib/router";
 import { useUser } from "@/state/session";
@@ -17,7 +17,13 @@ type Customer = {
   id: number;
   name: string;
   deal_type: string;
+  /** 끝 4자리 가림 표시 ("***-****-1234"). 원문은 '보기'로만 */
   phone: string | null;
+  has_phone: boolean;
+  /** 사무소 설정상 이 사람에게는 연락처를 보여 주지 않음 */
+  phone_hidden: boolean;
+  privacy_consent_at: string | null;
+  monthly_rent_max: number | null;
   agent_id: number;
   agent_name: string;
   budget_max: number | null;
@@ -35,7 +41,7 @@ type CustomerDeal = {
   stage: string;
   next_action: string | null;
   dropped_reason: string | null;
-  listing: { label: string; title: string; price: number | null };
+  listing: { label: string; title: string; price: number | null; price_text?: string };
 };
 type ReportRow = { id: number; title: string; created_at: string; version: string; state: string };
 type Activity = { at: string; text: string; user_name?: string | null };
@@ -129,7 +135,13 @@ function Detail({ cid }: { cid: number }) {
       <div className="c-head">
         <div>
           <h1>{c.name} <span className="muted" style={{ fontSize: 13 }}>{c.deal_type}</span></h1>
-          <div className="meta">담당 {c.agent_name}{c.phone ? ` · ${c.phone}` : ""}{c.first_home ? " · 생애최초 구입" : ""}</div>
+          <div className="meta">
+            담당 {c.agent_name}
+            {c.phone && <> · <PhoneReveal cid={c.id} masked={c.phone} /></>}
+            {c.phone_hidden && <> · <span className="muted">연락처는 담당 중개사만 볼 수 있습니다</span></>}
+            {c.first_home ? " · 생애최초 구입" : ""}
+            {!c.privacy_consent_at && (c.has_phone || c.phone_hidden) && <> · <span style={{ color: "var(--warn)" }}>개인정보 동의 기록 없음</span></>}
+          </div>
         </div>
         <div className="c-acts">
           <a className="btn" href={`#/map/match/${c.id}`}>조건에 맞는 매물 지도에서 보기</a>
@@ -142,7 +154,9 @@ function Detail({ cid }: { cid: number }) {
       <div className="sec">
         <div className="sec-h"><h2>찾는 조건</h2><button type="button" className="btn--link" data-act="edit-customer" onClick={editCustomer}>수정</button></div>
         <dl className="kv">
-          <dt>예산</dt><dd>{c.budget_max ? `${eok(c.budget_max)} 이하` : "-"}</dd>
+          <dt>{isRent(c.deal_type) ? "보증금" : "예산"}</dt>
+          <dd>{c.budget_max ? `${isRent(c.deal_type) ? won(c.budget_max) : eok(c.budget_max)} 이하` : "-"}
+            {c.monthly_rent_max ? `, 월세 ${c.monthly_rent_max}만 원 이하` : ""}</dd>
           <dt>면적</dt><dd>{c.area_min ? `전용 ${c.area_min}㎡ 이상` : "-"}</dd>
           <dt>지역</dt><dd>{c.district || "-"}{c.station_walk_max ? `, 역 도보 ${c.station_walk_max}분 이내` : ""}</dd>
           <dt>원하는 점</dt><dd>{c.preferences.join(", ") || "-"}</dd>
@@ -163,7 +177,7 @@ function Detail({ cid }: { cid: number }) {
                 return (
                   <tr key={x.id} className="clickable" data-act="open" data-id={x.listing_id} tabIndex={0} onClick={go} onKeyDown={rowKeys(go)}>
                     <td><b>{x.listing.label}</b> {x.listing.title}</td>
-                    <td className="r num">{eok(x.listing.price)}</td>
+                    <td className="r num">{x.listing.price_text ?? priceText(x.listing)}</td>
                     <td><StageTag s={x.stage} />{x.stage === "dropped" ? null : <><br /><Prog s={x.stage} /></>}</td>
                     <td>{x.stage === "dropped" ? x.dropped_reason : x.next_action}</td>
                   </tr>
@@ -287,6 +301,7 @@ function CustomerDialog({ c, close, onSaved }: { c?: Customer; close: () => void
   const qc = useQueryClient();
   const [busy, run] = useBusy();
   const v = (x: string | number | null | undefined) => (x == null ? "" : String(x));
+  const [dealType, setDealType] = useState(c ? dealOf(c.deal_type) : "매수");
 
   const save = async (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
@@ -295,8 +310,11 @@ function CustomerDialog({ c, close, onSaved }: { c?: Customer; close: () => void
     const num = (k: string) => (s(k) === "" ? null : Number(s(k)));
     const body = {
       name: s("name"), deal_type: s("deal_type") || "매수", phone: s("phone") || null,
-      budget_max: num("budget_max"), area_min: num("area_min"), district: s("district") || null,
+      clear_phone: f.get("clear_phone") === "on",
+      budget_max: num("budget_max"), monthly_rent_max: dealType === "월세" ? num("monthly_rent_max") : null,
+      area_min: num("area_min"), district: s("district") || null,
       station_walk_max: num("station_walk_max"), first_home: f.get("first_home") === "on",
+      privacy_consent: f.get("privacy_consent") === "on",
       preferences: s("preferences").split(",").map((x) => x.trim()).filter(Boolean),
     };
     const r = await run(() => api<CustomerSaved>(c ? "PUT" : "POST", c ? `/customers/${c.id}` : "/customers", body));
@@ -317,23 +335,62 @@ function CustomerDialog({ c, close, onSaved }: { c?: Customer; close: () => void
       <h2>{c ? "찾는 조건 수정" : "고객 등록"}</h2>
       <label>이름 *<input id="cf-name" name="name" defaultValue={v(c?.name)} maxLength={50} required /></label>
       <div className="row2">
-        <label>거래 종류<input id="cf-deal_type" name="deal_type" defaultValue={c ? v(c.deal_type) : "아파트 매수"} maxLength={20} /></label>
-        <label>연락처<input id="cf-phone" name="phone" defaultValue={v(c?.phone)} maxLength={30} /></label>
+        <label>거래 종류
+          <select id="cf-deal_type" name="deal_type" value={dealType} onChange={(e) => setDealType(e.target.value)}>
+            <option value="매수">매수</option><option value="전세">전세</option><option value="월세">월세</option>
+          </select>
+        </label>
+        <label>연락처{c?.has_phone ? " (바꿀 때만 입력)" : ""}
+          <input id="cf-phone" name="phone" maxLength={30} placeholder={c?.phone ?? "010-0000-0000"} autoComplete="off" />
+        </label>
       </div>
+      {c?.has_phone && <label className="check-row"><input name="clear_phone" type="checkbox" /> 저장된 연락처 지우기</label>}
       <div className="row2">
-        <label>예산 상한 (만원)<input id="cf-budget_max" name="budget_max" type="number" defaultValue={v(c?.budget_max)} /></label>
-        <label>최소 면적 (㎡)<input id="cf-area_min" name="area_min" type="number" step="any" defaultValue={v(c?.area_min)} /></label>
+        <label>{dealType === "매수" ? "예산 상한" : "보증금 한도"} (만원)
+          <input id="cf-budget_max" name="budget_max" type="number" defaultValue={v(c?.budget_max)} /></label>
+        {dealType === "월세"
+          ? <label>월세 한도 (만원)<input id="cf-monthly_rent_max" name="monthly_rent_max" type="number" defaultValue={v(c?.monthly_rent_max)} /></label>
+          : <label>최소 면적 (㎡)<input id="cf-area_min" name="area_min" type="number" step="any" defaultValue={v(c?.area_min)} /></label>}
       </div>
+      {dealType === "월세" && (
+        <label>최소 면적 (㎡)<input id="cf-area_min" name="area_min" type="number" step="any" defaultValue={v(c?.area_min)} /></label>
+      )}
       <div className="row2">
         <label>지역 (구)<input id="cf-district" name="district" defaultValue={c ? v(c.district) : "마포구"} maxLength={30} /></label>
         <label>역 도보 (분 이내)<input id="cf-station_walk_max" name="station_walk_max" type="number" defaultValue={v(c?.station_walk_max)} /></label>
       </div>
       <label>원하는 점 (쉼표로 구분)<input id="cf-preferences" name="preferences" defaultValue={c ? c.preferences.join(", ") : ""} /></label>
-      <label className="check-row"><input id="cf-first_home" name="first_home" type="checkbox" defaultChecked={Boolean(c?.first_home)} /> 생애최초 구입</label>
+      {dealType === "매수" && (
+        <label className="check-row"><input id="cf-first_home" name="first_home" type="checkbox" defaultChecked={Boolean(c?.first_home)} /> 생애최초 구입</label>
+      )}
+      <label className="check-row">
+        <input id="cf-privacy_consent" name="privacy_consent" type="checkbox" defaultChecked={Boolean(c?.privacy_consent_at)} />
+        개인정보 수집·이용 동의를 받았습니다{c?.privacy_consent_at ? ` (${day(c.privacy_consent_at)})` : ""}
+      </label>
       <div className="btns">
         <button type="button" className="btn" data-act="close-dialog" onClick={close}>취소</button>
         <button type="submit" className="btn btn--main" data-act="customer-save" data-id={c?.id} disabled={busy}>{c ? "저장" : "등록"}</button>
       </div>
     </form>
+  );
+}
+
+const isRent = (t: string) => /전세|월세/.test(t);
+/** 예전 자유 입력('아파트 매수')도 매수·전세·월세 중 하나로 읽는다 (서버 drafting.customer_mode와 같은 규칙) */
+const dealOf = (t: string) => (t.includes("월세") ? "월세" : /전세|임차/.test(t) ? "전세" : "매수");
+
+/** 가림 표시된 연락처. 누르면 원문을 한 번 받아 보여 준다 (서버가 볼 때마다 감사 기록을 남긴다) */
+function PhoneReveal({ cid, masked }: { cid: number; masked: string }) {
+  const toast = useToast();
+  const [phone, setPhone] = useState<string | null>(null);
+  useEffect(() => setPhone(null), [cid]);
+  if (phone) return <a href={`tel:${phone.replace(/[^0-9+]/g, "")}`} className="num">{phone}</a>;
+  return (
+    <span className="num">{masked}{" "}
+      <button type="button" className="btn--link" data-act="reveal-phone" onClick={async () => {
+        try { setPhone((await api<{ phone: string }>("POST", `/customers/${cid}/phone`)).phone); }
+        catch (e) { toast((e as Error).message); }
+      }}>보기</button>
+    </span>
   );
 }

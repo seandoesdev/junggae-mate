@@ -8,7 +8,7 @@ import type { ViewProps } from "@/App";
 import { StageTag } from "@/components/Stage";
 import { api } from "@/lib/api";
 import { staggerIn } from "@/lib/anime";
-import { STAGES, STAGE_COLOR, eok, stageIdx } from "@/lib/format";
+import { DEAL_LABEL, STAGES, STAGE_COLOR, eok, mainAmount, shortPrice, stageIdx, won, type Deal } from "@/lib/format";
 import { DUR, EASE_OUT, press } from "@/lib/motion";
 import { navigate } from "@/lib/router";
 import { useUser } from "@/state/session";
@@ -22,7 +22,10 @@ import type { AskResult as AskResultData, AskState, Listing } from "./types";
 import { safeDecode } from "./util";
 import "./map.css";
 
-type MatchCustomer = { id: number; name: string; budget_max: number | null; area_min: number | null; station_walk_max: number | null };
+type MatchCustomer = {
+  id: number; name: string; deal_type: string; budget_max: number | null; monthly_rent_max: number | null;
+  area_min: number | null; station_walk_max: number | null;
+};
 type Match = { customer: MatchCustomer; ids: Set<number> };
 type Scope = "mine" | "all";
 
@@ -44,6 +47,8 @@ export default function MapView({ a, b }: ViewProps) {
   }
   const [scope, setScopeState] = useState<Scope>(mapMemory.scope);
   const [hidden, setHiddenState] = useState<Set<string>>(() => new Set(mapMemory.hidden));
+  const [deal, setDealState] = useState<Deal | null>(mapMemory.deal);
+  const setDeal = (d: Deal | null) => { mapMemory.deal = d; setDealState(d); };
   const [listings, setListings] = useState<Listing[] | null>(null);
   const [match, setMatch] = useState<Match | null>(null);
   const [ask, setAskState] = useState<AskState | null>(getMapAsk);
@@ -162,7 +167,9 @@ export default function MapView({ a, b }: ViewProps) {
   };
 
   // ── 핀 ──
-  const visible = useMemo(() => (listings || []).filter((l) => !hidden.has(l.stage)), [listings, hidden]);
+  const visible = useMemo(
+    () => (listings || []).filter((l) => !hidden.has(l.stage) && (!deal || l.deal_types.includes(deal))),
+    [listings, hidden, deal]);
   const matchIds = useMemo(() => {
     if (match) return match.ids;
     // 맞는 매물이 하나도 없으면 강조하지 않는다 (모든 핀이 흐려져 지도가 빈 것처럼 보이지 않도록)
@@ -176,7 +183,7 @@ export default function MapView({ a, b }: ViewProps) {
     if (!map || !listings) return;
     const first = !pinsShown.current;
     const ls = visible.filter((l) => l.lat && l.lng);
-    const markers = ls.map((l) => map.addPin({ lat: l.lat!, lng: l.lng! }, pinHtml(l, matchIds, detailId === l.id, first), {
+    const markers = ls.map((l) => map.addPin({ lat: l.lat!, lng: l.lng! }, pinHtml(l, matchIds, detailId === l.id, first, deal), {
       zIndex: detailId === l.id ? 1000 : stageIdx(l.stage) * 10,
       title: `${l.label} ${l.title}`,
       onClick: () => { if (!pickRef.current) navigate(`#/map/l/${l.id}`); },
@@ -213,7 +220,7 @@ export default function MapView({ a, b }: ViewProps) {
       markers.forEach((mk) => mk.remove());
       placed?.remove();
     };
-  }, [map, listings, visible, matchIds, detailId, ask, scope, match]);
+  }, [map, listings, visible, matchIds, detailId, ask, scope, match, deal]);
 
   // ── 매물 등록·수정: 지도를 눌러 위치를 정한다 ──
   const tempMarker = useRef<Pin | null>(null);
@@ -295,7 +302,8 @@ export default function MapView({ a, b }: ViewProps) {
   } else {
     sideKey = "list";
     sideEl = (
-      <ListingList listings={visible} title={match ? `${match.customer.name} 고객 조건` : scope === "mine" ? "내 매물" : "사무소 매물"}
+      <ListingList listings={visible} deal={deal}
+        title={match ? `${match.customer.name} 고객 조건` : scope === "mine" ? "내 매물" : "사무소 매물"}
         onRegister={() => openForm(null)} onOpen={openListing} />
     );
   }
@@ -312,7 +320,9 @@ export default function MapView({ a, b }: ViewProps) {
     barKey = `match-${c.id}`;
     barEl = (
       <>
-        <span><b>{c.name}</b> 조건 ({eok(c.budget_max)} 이하, {c.area_min ?? "-"}㎡ 이상, 역 {c.station_walk_max ?? "-"}분): 맞는 매물 {match.ids.size}건 표시</span>
+        <span><b>{c.name}</b> 조건 ({c.deal_type} · {/전세|월세/.test(c.deal_type) ? `보증금 ${won(c.budget_max)}` : eok(c.budget_max)} 이하
+          {c.monthly_rent_max ? `, 월 ${c.monthly_rent_max}만 이하` : ""}, {c.area_min ?? "-"}㎡ 이상, 역 {c.station_walk_max ?? "-"}분):
+          맞는 매물 {match.ids.size}건 표시</span>
         <button type="button" className="btn btn--sm" data-act="clear-match" onClick={() => navigate("#/map")}>해제</button>
       </>
     );
@@ -344,6 +354,14 @@ export default function MapView({ a, b }: ViewProps) {
             <button type="button" data-scope="mine" aria-pressed={scope === "mine"} onClick={() => changeScope("mine")}>내 매물</button>
             <button type="button" data-scope="all" aria-pressed={scope === "all"} onClick={() => changeScope("all")}>사무소 전체</button>
           </div>
+          <div className="toggle" role="group" aria-label="거래 종류" id="deal-filter">
+            <button type="button" data-deal="" aria-pressed={deal === null} onClick={() => setDeal(null)}>전체</button>
+            {(Object.keys(DEAL_LABEL) as Deal[]).map((d) => (
+              <button key={d} type="button" data-deal={d} aria-pressed={deal === d} onClick={() => setDeal(deal === d ? null : d)}>
+                {DEAL_LABEL[d]}
+              </button>
+            ))}
+          </div>
           <div className="stage-filter" id="stage-filter" role="group" aria-label="거래 단계 필터">
             {listings && ["available", ...STAGES].map((s) => (
               <motion.button key={s} type="button" data-act="filter" data-s={s} aria-pressed={!hidden.has(s)}
@@ -373,10 +391,10 @@ export default function MapView({ a, b }: ViewProps) {
   );
 }
 
-function ListingList({ listings, title, onRegister, onOpen }: {
-  listings: Listing[]; title: string; onRegister: () => void; onOpen: (id: number) => void;
+function ListingList({ listings, deal, title, onRegister, onOpen }: {
+  listings: Listing[]; deal: Deal | null; title: string; onRegister: () => void; onOpen: (id: number) => void;
 }) {
-  const ls = listings.slice().sort((x, y) => stageIdx(y.stage) - stageIdx(x.stage) || x.price - y.price);
+  const ls = listings.slice().sort((x, y) => stageIdx(y.stage) - stageIdx(x.stage) || mainAmount(x) - mainAmount(y));
   return (
     <>
       <div className="side-h">
@@ -393,7 +411,7 @@ function ListingList({ listings, title, onRegister, onOpen }: {
               onClick={() => onOpen(l.id)} onKeyDown={(e) => { if (e.key === "Enter") onOpen(l.id); }}>
               <td></td>
               <td><b>{l.label}</b> {l.title}{!l.mine && <><br /><span className="muted">담당 {l.agent_name}</span></>}</td>
-              <td className="r num">{eok(l.price)}</td>
+              <td className="r num" title={l.price_text}>{shortPrice(l, deal)}</td>
               <td><StageTag s={l.stage} /></td>
               <td className="num">{l.active_deals || "-"}</td>
             </tr>

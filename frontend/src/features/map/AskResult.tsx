@@ -4,7 +4,7 @@ import { motion } from "motion/react";
 import { NoteText, SrcRef } from "@/components/Notes";
 import { StageTag } from "@/components/Stage";
 import { api } from "@/lib/api";
-import { NOTE_TOKEN, STAGE_COLOR, eok } from "@/lib/format";
+import { NOTE_TOKEN, STAGE_COLOR, shortPrice } from "@/lib/format";
 import { press } from "@/lib/motion";
 import { useUser } from "@/state/session";
 import { useToast, useUi } from "@/state/ui";
@@ -98,7 +98,7 @@ export function AskResult({ ask, listings, onDrop, onReset, onDropAll, onClear, 
                         {l.matched.map((m, i) => <span key={`m${i}`} className="why">{m.want}: {m.text}</span>)}
                         {l.unmet.map((u, i) => <span key={`u${i}`} className="why gap">차이: {u}</span>)}
                       </td>
-                      <td className="r num">{eok(l.price)}</td>
+                      <td className="r num" title={l.price_text}>{shortPrice(l)}</td>
                       <td><StageTag s={st} /></td>
                     </tr>
                   );

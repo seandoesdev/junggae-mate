@@ -392,3 +392,83 @@ CREATE TABLE IF NOT EXISTS retrieval_traces (
   created_at     TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS retrieval_traces_tenant_idx ON retrieval_traces (tenant_id, created_at DESC);
+
+-- ===== v0.4 (PRD 1단계): 전월세·매물 유형, 의뢰인(집주인)·의뢰, 연락처 암호화, 계정 정지·인계 =====
+-- 매물 금액: 매매가(price) · 전세 보증금 · 월세 보증금/월세. 한 매물을 여러 거래 종류로 내놓을 수 있다 (만원 단위)
+ALTER TABLE listings ALTER COLUMN price DROP NOT NULL;
+ALTER TABLE listings ADD COLUMN IF NOT EXISTS jeonse_deposit  INT;
+ALTER TABLE listings ADD COLUMN IF NOT EXISTS monthly_deposit INT;
+ALTER TABLE listings ADD COLUMN IF NOT EXISTS monthly_rent    INT;
+ALTER TABLE listings ADD COLUMN IF NOT EXISTS property_type   TEXT NOT NULL DEFAULT 'apartment';
+ALTER TABLE listings ADD COLUMN IF NOT EXISTS supply_m2       NUMERIC(6,2);
+ALTER TABLE listings ADD COLUMN IF NOT EXISTS rooms           SMALLINT;
+ALTER TABLE listings ADD COLUMN IF NOT EXISTS baths           SMALLINT;
+ALTER TABLE listings ADD COLUMN IF NOT EXISTS facing          TEXT;
+ALTER TABLE listings ADD COLUMN IF NOT EXISTS maintenance_fee INT;      -- 월 관리비 (만원)
+ALTER TABLE listings ADD COLUMN IF NOT EXISTS maintenance_note TEXT;    -- 관리비 포함 항목
+ALTER TABLE listings ADD COLUMN IF NOT EXISTS parking         TEXT;
+ALTER TABLE listings ADD COLUMN IF NOT EXISTS move_in         TEXT;     -- 입주 가능일 (날짜·즉시·협의)
+ALTER TABLE listings ADD COLUMN IF NOT EXISTS loan_amount     INT;      -- 융자 (만원)
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'listings_amount_chk') THEN
+    ALTER TABLE listings ADD CONSTRAINT listings_amount_chk CHECK (
+      price IS NOT NULL OR jeonse_deposit IS NOT NULL OR (monthly_deposit IS NOT NULL AND monthly_rent IS NOT NULL));
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'listings_property_type_chk') THEN
+    ALTER TABLE listings ADD CONSTRAINT listings_property_type_chk CHECK (
+      property_type IN ('apartment', 'officetel', 'villa', 'house', 'oneroom', 'commercial'));
+  END IF;
+END $$;
+
+-- 고객: 전세·월세 고객의 월세 한도. 연락처는 암호문(phone_enc)과 끝 4자리만 둔다 (phone 평문 칸은 기동 시 옮기고 비운다)
+ALTER TABLE customers ADD COLUMN IF NOT EXISTS monthly_rent_max   INT;
+ALTER TABLE customers ADD COLUMN IF NOT EXISTS phone_enc          TEXT;
+ALTER TABLE customers ADD COLUMN IF NOT EXISTS phone_last4        TEXT;
+ALTER TABLE customers ADD COLUMN IF NOT EXISTS privacy_consent_at TIMESTAMPTZ;
+
+-- 계정 정지: 정지된 계정은 로그인·기존 토큰 모두 막힌다
+ALTER TABLE users ADD COLUMN IF NOT EXISTS active      BOOLEAN NOT NULL DEFAULT true;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS disabled_at TIMESTAMPTZ;
+
+-- 의뢰인(집주인·매도인·임대인). 한 사람이 여러 매물을 맡길 수 있다
+CREATE TABLE IF NOT EXISTS owners (
+  id                 SERIAL PRIMARY KEY,
+  tenant_id          INT NOT NULL REFERENCES tenants(id),
+  name               TEXT NOT NULL,
+  phone_enc          TEXT,
+  phone_last4        TEXT,
+  relation           TEXT NOT NULL DEFAULT '본인',
+  memo               TEXT,
+  privacy_consent_at TIMESTAMPTZ,
+  created_by         INT REFERENCES users(id),
+  created_at         TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS owners_tenant_idx ON owners (tenant_id);
+
+-- 의뢰 조건과 방문 안내 (매물당 하나). 출입 정보·세입자 연락처는 암호문으로만 둔다
+CREATE TABLE IF NOT EXISTS mandates (
+  listing_id         INT PRIMARY KEY REFERENCES listings(id) ON DELETE CASCADE,
+  tenant_id          INT NOT NULL REFERENCES tenants(id),
+  owner_id           INT NOT NULL REFERENCES owners(id),
+  kind               TEXT NOT NULL DEFAULT 'general' CHECK (kind IN ('general', 'exclusive')),
+  starts_on          DATE,
+  ends_on            DATE,
+  price_flex         TEXT,          -- 가격 조정 여지
+  move_out           TEXT,          -- 희망 입주·명도 시기
+  occupancy          TEXT NOT NULL DEFAULT 'vacant' CHECK (occupancy IN ('vacant', 'owner', 'tenant')),
+  tenant_phone_enc   TEXT,
+  tenant_phone_last4 TEXT,
+  visit_rule         TEXT,          -- 방문 가능 시간·연락 방법
+  access_enc         TEXT,          -- 출입 비밀번호·열쇠 위치
+  updated_by         INT REFERENCES users(id),
+  updated_at         TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS mandates_owner_idx ON mandates (owner_id);
+
+-- 사무소 설정 (관리자)
+CREATE TABLE IF NOT EXISTS office_settings (
+  tenant_id          INT PRIMARY KEY REFERENCES tenants(id),
+  contact_owner_only BOOLEAN NOT NULL DEFAULT false,   -- 고객 연락처는 담당 중개사·관리자만 볼 수 있게
+  updated_by         INT REFERENCES users(id),
+  updated_at         TIMESTAMPTZ NOT NULL DEFAULT now()
+);

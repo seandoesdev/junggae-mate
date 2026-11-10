@@ -161,13 +161,13 @@ def test_library_respects_acl(client, kim, other):
 
 def test_listing_stage_and_scope(client, kim, park):
     items = {l["label"]: l for l in client.get("/api/listings", headers=kim).json()["items"]}
-    assert len(items) == 12
+    assert len(items) == 16
     assert (items["A"]["stage"], items["A"]["active_deals"]) == ("nego", 2)
     assert items["G"]["stage"] == "contract" and items["L"]["stage"] == "done" and items["E"]["stage"] == "available"
     assert items["A"]["agent_name"] == "김선용" and items["A"]["mine"] and not items["D"]["mine"]
     mine = {l["label"] for l in client.get("/api/listings", params={"mine": "true"}, headers=kim).json()["items"]}
-    assert mine == {"A", "B", "C", "E", "G", "J"}
-    assert {l["label"] for l in client.get("/api/listings", params={"mine": "true"}, headers=park).json()["items"]} == {"D", "F", "K"}
+    assert mine == {"A", "B", "C", "E", "G", "J", "O"}
+    assert {l["label"] for l in client.get("/api/listings", params={"mine": "true"}, headers=park).json()["items"]} == {"D", "F", "K", "M"}
 
 
 def test_listing_checks_use_documents(client, kim, L):
@@ -197,7 +197,7 @@ def test_listing_register_edit_close_permissions(client, kim, park, admin):
             "price": 79000, "area_m2": 59.5, "lat": 37.556, "lng": 126.905, "station": "망원역", "station_walk_min": 6}
     assert client.post("/api/listings", headers=kim, json={**body, "lat": 10}).status_code == 422
     new = client.post("/api/listings", headers=kim, json=body).json()
-    assert new["mine"] and new["stage"] == "available" and new["label"] == "M"
+    assert new["mine"] and new["stage"] == "available" and new["label"] == "Q"
     assert client.put(f"/api/listings/{new['id']}", headers=park, json=body).status_code == 403
     upd = client.put(f"/api/listings/{new['id']}", headers=admin, json={**body, "price": 77000}).json()
     assert [h["price"] for h in upd["price_history"]] == [79000, 77000]
@@ -208,8 +208,8 @@ def test_listing_register_edit_close_permissions(client, kim, park, admin):
 # ---------- 고객 ----------
 
 def test_customers(client, kim, park, C):
-    assert len(client.get("/api/customers", headers=kim).json()) == 7
-    assert {c["name"] for c in client.get("/api/customers", params={"mine": "true"}, headers=park).json()} == {"최유나", "오지훈"}
+    assert len(client.get("/api/customers", headers=kim).json()) == 9
+    assert {c["name"] for c in client.get("/api/customers", params={"mine": "true"}, headers=park).json()} == {"최유나", "오지훈", "정다은"}
     d = client.get(f"/api/customers/{C['김하늘']}", headers=kim).json()
     assert d["customer"]["top_stage"] == "nego" and d["customer"]["first_home"]
     assert {x["listing"]["label"] for x in d["deals"]} == {"A", "B", "E"}
@@ -535,10 +535,11 @@ def test_structured_evidence_routing(client, kim, L):
     src = next(s for s in rent["sources"] if s["id"] == f"r{L['A']}")
     assert src["kind"] == "structured" and src["source_id"] == "15126474" and src["value"]["jeonse_count"] == 3
     assert set(_tokens(rent["opinion"])) <= {s["id"] for s in rent["sources"]}
-    # 전세 금액은 매매 가격 조건으로 쓰지 않는다
+    # 전세 금액은 보증금 조건: 전세로 내놓은 매물만, 보증금과 비교한다 (매매가와 비교하지 않음)
     budget = client.post("/api/search", headers=kim, json={"q": "마포구 전세 5억 이하"}).json()
-    assert "price" not in {c["key"] for c in budget["understood"]}
-    assert any("매매 매물 가격 조건으로 쓰지 않았습니다" in t for t in budget["to_check"])
+    chips = {c["key"]: c["label"] for c in budget["understood"]}
+    assert chips["deal"] == "전세" and chips["price"] == "보증금 5억 이하"
+    assert {l["label"] for l in budget["listings"]} == {"N"}   # M(전세 5.2억)은 넘고, 매매만 내놓은 매물·완료된 L은 빠진다
     # 연결된 단지(K-apt)와 역(TAGO)
     cx = client.post("/api/search", headers=kim, json={"q": "마포한강뷰 세대수랑 몇 호선이야?"}).json()
     assert {"complex", "station"} <= set(cx["routes"]) and "612세대" in cx["opinion"] and "6호선" in cx["opinion"]
@@ -682,3 +683,159 @@ def test_compare_report_includes_linked_complex(client, kim, C):
     rep = client.post(f"/api/customers/{C['김하늘']}/reports", headers=kim, json={"kind": "compare"}).json()
     a = next(l for l in rep["listings"] if l["label"] == "A")
     assert a["public"]["complex"]["household_count"] == 612 and "612세대" in rep["opinion"]
+
+
+# ---------- PRD 1단계: 전월세 매물·의뢰인·연락처 보호·계정 정지 ----------
+
+def _cid(client, h, name):
+    return next(c["id"] for c in client.get("/api/customers", headers=h).json() if c["name"] == name)
+
+
+def ids_of(client, h, label):
+    return next(l["id"] for l in client.get("/api/listings", headers=h).json()["items"] if l["label"] == label)
+
+
+def test_rental_listings_register_filter_and_validate(client, kim, park):
+    base = {"title": "망원 빌라 전세", "property_type": "villa", "address": "서울 마포구 망원로 9", "district": "마포구",
+            "area_m2": 42.0, "lat": 37.556, "lng": 126.905}
+    # 금액 없음 · 월세 반쪽 · 아파트인데 단지 이름 없음 → 422
+    assert client.post("/api/listings", headers=kim, json=base).status_code == 422
+    assert client.post("/api/listings", headers=kim, json={**base, "monthly_rent": 50}).status_code == 422
+    assert client.post("/api/listings", headers=kim, json={**base, "property_type": "apartment", "jeonse_deposit": 20000}).status_code == 422
+    v = client.post("/api/listings", headers=kim, json={**base, "jeonse_deposit": 21000, "maintenance_fee": 6, "move_in": "즉시"}).json()
+    assert v["deal_types"] == ["jeonse"] and v["price"] is None and v["price_text"] == "전세 2.1억"
+    assert v["complex_name"] == "망원 빌라 전세"          # 빌라는 단지 이름을 비우면 매물 이름을 쓴다
+    assert [h["price"] for h in v["price_history"]] == [21000]
+
+    jeonse = client.get("/api/listings", params={"deal": "jeonse"}, headers=kim).json()["items"]
+    assert jeonse and all("jeonse" in l["deal_types"] for l in jeonse)
+    cheap = client.get("/api/listings", params={"deal": "jeonse", "max_price": 30000}, headers=kim).json()["items"]
+    assert all(l["jeonse_deposit"] <= 30000 for l in cheap) and {"N", v["label"]} <= {l["label"] for l in cheap}
+    monthly = {l["label"]: l for l in client.get("/api/listings", params={"deal": "monthly"}, headers=kim).json()["items"]}
+    assert set(monthly) == {"O", "P"} and monthly["O"]["price_text"] == "월세 1,000만/75"
+    both = next(l for l in client.get("/api/listings", headers=kim).json()["items"] if l["label"] == "L")
+    assert both["deal_types"] == ["sale", "jeonse"] and both["price_text"] == "매매 6.4억 · 전세 3.8억"
+    client.post(f"/api/listings/{v['id']}/close", headers=kim)
+
+
+def test_rental_customers_match_by_deal_type(client, kim, park):
+    jd = _cid(client, park, "정다은")      # 전세, 보증금 3억, 전용 45㎡↑, 역 10분
+    got = {l["label"] for l in client.get(f"/api/customers/{jd}/matches", headers=park).json()["items"]}
+    assert got == {"N"}
+    hj = _cid(client, kim, "한지훈")       # 월세, 보증금 3천, 월 80만
+    assert {l["label"] for l in client.get(f"/api/customers/{hj}/matches", headers=kim).json()["items"]} == {"O"}
+    # 질문 검색: 월세 조건
+    r = client.post("/api/search", headers=kim, json={"q": "마포구 월세 보증금 3000만 월 80만 이하"}).json()
+    chips = {c["key"]: c["label"] for c in r["understood"]}
+    assert chips["deal"] == "월세" and chips["rent"] == "월세 80만 원 이하" and chips["price"] == "보증금 3,000만 이하"
+    assert {l["label"] for l in r["listings"]} == {"O"}
+    # 고객 자료(비교표)도 고객의 거래 종류로 금액을 쓴다
+    rep_ = client.post(f"/api/customers/{jd}/reports", headers=park, json={"kind": "compare", "listing_ids": [ids_of(client, park, "N")]})
+    assert rep_.status_code == 201, rep_.text
+    assert "전세 2.8억" in rep_.json()["opinion"]
+
+
+def test_customer_phone_is_encrypted_masked_and_audited(client, kim, park, admin):
+    with tx() as conn:
+        assert conn.execute("SELECT count(*) AS n FROM customers WHERE phone IS NOT NULL").fetchone()["n"] == 0
+        enc = conn.execute("SELECT phone_enc FROM customers WHERE name = '정다은'").fetchone()["phone_enc"]
+    assert enc and "0000" not in enc
+    jd = _cid(client, park, "정다은")
+    c = client.get(f"/api/customers/{jd}", headers=kim).json()["customer"]
+    assert c["phone"] == "***-****-4444" and c["has_phone"] and not c["phone_hidden"]
+    assert client.post(f"/api/customers/{jd}/phone", headers=kim).json() == {"phone": "010-0000-4444"}
+    with tx() as conn:
+        ev = conn.execute("SELECT payload FROM audit_events WHERE event = 'customer.phone_viewed' AND entity_id = %s",
+                          (jd,)).fetchall()
+    assert ev and all("010" not in str(e["payload"]) for e in ev)
+
+    # 새 번호 저장 · 비우면 유지 · 개인정보 동의 시각 기록
+    body = {"name": "정다은", "deal_type": "전세", "budget_max": 30000, "area_min": 45, "district": "마포구",
+            "station_walk_max": 10, "preferences": ["역세권"], "privacy_consent": True}
+    keep = client.put(f"/api/customers/{jd}", headers=park, json=body).json()["customer"]
+    assert keep["phone"] == "***-****-4444" and keep["privacy_consent_at"]
+    new = client.put(f"/api/customers/{jd}", headers=park, json={**body, "phone": "010-0000-9876"}).json()["customer"]
+    assert new["phone"] == "***-****-9876"
+
+    # 사무소 설정: 연락처는 담당·관리자만
+    assert client.put("/api/office/settings", headers=kim, json={"contact_owner_only": True}).status_code == 403
+    assert client.put("/api/office/settings", headers=admin, json={"contact_owner_only": True}).json()["contact_owner_only"]
+    hidden = client.get(f"/api/customers/{jd}", headers=kim).json()["customer"]
+    assert hidden["phone"] is None and hidden["phone_hidden"]
+    assert client.post(f"/api/customers/{jd}/phone", headers=kim).status_code == 403
+    assert client.put(f"/api/customers/{jd}", headers=kim, json={**body, "phone": "010-1111-1111"}).status_code == 403
+    assert client.get(f"/api/customers/{jd}", headers=park).json()["customer"]["phone"] == "***-****-9876"
+    assert client.post(f"/api/customers/{jd}/phone", headers=admin).status_code == 200
+    client.put("/api/office/settings", headers=admin, json={"contact_owner_only": False})
+
+
+def test_mandate_owner_and_secrets(client, kim, park, admin, other):
+    a = ids_of(client, kim, "A")
+    m = client.get(f"/api/listings/{a}/mandate", headers=park).json()
+    assert not m["can_edit"] and m["mandate"]["kind"] == "exclusive" and m["mandate"]["occupancy"] == "tenant"
+    assert m["mandate"]["owner"]["phone"] == "***-****-1111" and m["mandate"]["has_access"]
+    assert "1234" not in str(m)                                   # 출입 정보는 가림 표시도 없이 '있음'만
+    assert client.post(f"/api/listings/{a}/mandate/reveal", headers=park, json={"field": "access"}).json()["value"].startswith("공동현관")
+    assert client.post(f"/api/listings/{a}/mandate/reveal", headers=other, json={"field": "access"}).status_code == 404
+    with tx() as conn:
+        ev = conn.execute("SELECT payload FROM audit_events WHERE event = 'listing.secret_viewed' AND entity_id = %s", (a,)).fetchall()
+    assert ev and ev[-1]["payload"] == {"field": "access"}
+
+    # 매물 담당이 아니면 의뢰 조건을 못 바꾼다. 새 의뢰인을 적어 저장
+    b = ids_of(client, kim, "B")
+    body = {"owner": {"name": "강민수", "phone": "010-0000-7777", "privacy_consent": True}, "kind": "general",
+            "occupancy": "owner", "visit_rule": "주말 오전", "access": "현관 5678#", "price_flex": "500만 원 조정 가능"}
+    assert client.put(f"/api/listings/{b}/mandate", headers=park, json=body).status_code == 403
+    assert client.put(f"/api/listings/{b}/mandate", headers=kim, json={**body, "owner_id": 1}).status_code == 422
+    saved = client.put(f"/api/listings/{b}/mandate", headers=kim, json=body).json()["mandate"]
+    assert saved["owner"]["name"] == "강민수" and saved["owner"]["privacy_consent_at"] and saved["price_flex"] == "500만 원 조정 가능"
+    owners = client.get("/api/owners", params={"q": "강민"}, headers=park).json()
+    assert [o["name"] for o in owners] == ["강민수"] and owners[0]["phone"] == "***-****-7777"
+    assert client.get("/api/owners", headers=other).json() == []   # 다른 사무소의 의뢰인은 보이지 않는다
+    # 비우면 출입 정보 유지
+    again = client.put(f"/api/listings/{b}/mandate", headers=kim,
+                       json={"owner_id": owners[0]["id"], "kind": "exclusive", "ends_on": "2027-01-31", "occupancy": "owner"}).json()["mandate"]
+    assert again["has_access"] and again["kind"] == "exclusive" and again["days_left"] > 0
+    assert client.put(f"/api/listings/{b}/mandate", headers=kim, json={"owner_id": owners[0]["id"], "kind": "general",
+                      "starts_on": "2027-02-01", "ends_on": "2027-01-01"}).status_code == 422
+
+    # 의뢰인 이름·연락처는 질문 검색 답변에 나오지 않는다
+    ans = client.post("/api/search", headers=kim, json={"q": "마포한강뷰 매물 알려줘"}).json()
+    assert "최영호" not in str(ans) and "1111" not in ans["opinion"]
+
+    # 거래 종료하면 출입 정보를 지운다
+    client.post(f"/api/listings/{b}/close", headers=kim)
+    assert not client.get(f"/api/listings/{b}/mandate", headers=kim).json()["mandate"]["has_access"]
+    with tx() as conn:
+        conn.execute("UPDATE listings SET status = 'active' WHERE id = %s", (b,))
+
+
+def test_admin_creates_disables_and_transfers_accounts(client, kim, admin):
+    assert client.get("/api/admin/users", headers=kim).status_code == 403
+    new = client.post("/api/admin/users", headers=admin, json={"name": "서지수", "email": "Seo@hanul.test", "password": "seo-12345"})
+    assert new.status_code == 201, new.text
+    assert new.json()["role"] == "agent"
+    assert client.post("/api/admin/users", headers=admin, json={"name": "중복", "email": "seo@hanul.test", "password": "seo-12345"}).status_code == 409
+    tok = client.post("/api/auth/login", json={"email": "seo@hanul.test", "password": "seo-12345"}).json()["access_token"]
+    seo = {"Authorization": f"Bearer {tok}"}
+    cid = client.post("/api/customers", headers=seo, json={"name": "인계고객", "phone": "010-0000-0001"}).json()["id"]
+    lst = client.post("/api/listings", headers=seo, json={
+        "title": "인계 매물", "property_type": "oneroom", "address": "서울 마포구 인계로 1", "district": "마포구",
+        "monthly_deposit": 500, "monthly_rent": 50, "area_m2": 20, "lat": 37.55, "lng": 126.95}).json()
+    uid = new.json()["id"]
+    kim_id = client.get("/api/me", headers=kim).json()["id"]
+    me_id = client.get("/api/me", headers=admin).json()["id"]
+    assert client.post(f"/api/admin/users/{me_id}/disable", headers=admin, json={"transfer_to": kim_id}).status_code == 422
+    assert client.post(f"/api/admin/users/{uid}/disable", headers=admin, json={"transfer_to": uid}).status_code == 422
+    r = client.post(f"/api/admin/users/{uid}/disable", headers=admin, json={"transfer_to": kim_id}).json()
+    assert r["moved"] == {"customers": 1, "listings": 1, "deals": 0} and not r["user"]["active"]
+    # 기존 토큰·로그인 모두 막힌다
+    assert client.get("/api/me", headers=seo).status_code == 401
+    assert client.post("/api/auth/login", json={"email": "seo@hanul.test", "password": "seo-12345"}).status_code == 403
+    assert uid not in {a["id"] for a in client.get("/api/agents", headers=kim).json()}
+    c = client.get(f"/api/customers/{cid}", headers=kim).json()
+    assert c["customer"]["agent_id"] == kim_id and any("인계" in a["text"] for a in c["activities"])
+    assert client.get(f"/api/listings/{lst['id']}", headers=kim).json()["listing"]["mine"]
+    assert client.post(f"/api/admin/users/{uid}/enable", headers=admin).json()["active"]
+    assert client.post("/api/auth/login", json={"email": "seo@hanul.test", "password": "seo-12345"}).status_code == 200
+    client.post(f"/api/listings/{lst['id']}/close", headers=kim)

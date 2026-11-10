@@ -13,6 +13,9 @@ export type TurnListing = {
   label: string;
   title: string;
   price: number | null;
+  jeonse_deposit?: number | null;
+  monthly_deposit?: number | null;
+  monthly_rent?: number | null;
   area_m2: number;
   district: string;
   stage: string;

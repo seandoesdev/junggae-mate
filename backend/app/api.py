@@ -7,9 +7,9 @@ from typing import Literal
 import psycopg
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.responses import HTMLResponse, JSONResponse
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
-from . import assistant, drafting, hood, llm, structured, public_catalog, public_data, public_sources, rag, workflow
+from . import assistant, drafting, hood, llm, structured, public_catalog, public_data, public_sources, rag, vault, workflow
 from .audit import record
 from .config import settings
 from .db import fetch_one, pool, tx
@@ -62,13 +62,35 @@ class _Clean(BaseModel):
         return data
 
 
+PropertyType = Literal["apartment", "officetel", "villa", "house", "oneroom", "commercial"]
+# 매물 입력 칸 = listings 열 이름 (INSERT·UPDATE에 그대로 쓴다)
+LISTING_FIELDS = ("title", "property_type", "complex_name", "address", "district", "price", "jeonse_deposit",
+                  "monthly_deposit", "monthly_rent", "area_m2", "supply_m2", "rooms", "baths", "facing", "maintenance_fee",
+                  "maintenance_note", "parking", "move_in", "loan_amount", "floor", "station", "station_walk_min",
+                  "park_walk_min", "lat", "lng", "description")
+
+
 class ListingIn(_Clean):
+    """금액은 만원. 매매가·전세 보증금·월세(보증금+월세) 중 하나 이상. 한 매물을 여러 거래 종류로 내놓을 수 있다"""
     title: str = Field(..., min_length=1, max_length=100)
-    complex_name: str = Field(..., min_length=1, max_length=100)
+    property_type: PropertyType = "apartment"
+    complex_name: str | None = Field(None, max_length=100, description="아파트·오피스텔은 필수. 비우면 매물 이름을 쓴다")
     address: str = Field(..., min_length=2, max_length=200)
     district: str = Field(..., min_length=1, max_length=30)
-    price: int = Field(..., gt=0, description="만원")
-    area_m2: float = Field(..., gt=0, lt=1000)
+    price: int | None = Field(None, gt=0, description="매매가 (만원)")
+    jeonse_deposit: int | None = Field(None, gt=0, description="전세 보증금 (만원)")
+    monthly_deposit: int | None = Field(None, ge=0, description="월세 보증금 (만원)")
+    monthly_rent: int | None = Field(None, gt=0, le=10000, description="월세 (만원)")
+    area_m2: float = Field(..., gt=0, lt=1000, description="전용면적")
+    supply_m2: float | None = Field(None, gt=0, lt=2000, description="공급면적")
+    rooms: int | None = Field(None, ge=0, le=20)
+    baths: int | None = Field(None, ge=0, le=10)
+    facing: str | None = Field(None, max_length=10)
+    maintenance_fee: int | None = Field(None, ge=0, le=1000, description="월 관리비 (만원)")
+    maintenance_note: str | None = Field(None, max_length=200)
+    parking: str | None = Field(None, max_length=50)
+    move_in: str | None = Field(None, max_length=30)
+    loan_amount: int | None = Field(None, ge=0, description="융자 (만원)")
     lat: float = Field(..., ge=33, le=39, description="대한민국 범위")
     lng: float = Field(..., ge=124, le=132)
     floor: str | None = Field(None, max_length=20)
@@ -77,23 +99,104 @@ class ListingIn(_Clean):
     park_walk_min: int | None = Field(None, ge=0, le=180)
     description: str | None = Field(None, max_length=2000)
 
+    @model_validator(mode="after")
+    def _amounts(self):
+        if self.property_type in ("apartment", "officetel") and not (self.complex_name or "").strip():
+            raise ValueError("아파트·오피스텔은 단지 이름을 적어 주세요.")
+        if (self.monthly_deposit is None) != (self.monthly_rent is None):
+            raise ValueError("월세는 보증금과 월세를 함께 적어 주세요.")
+        if self.price is None and self.jeonse_deposit is None and self.monthly_rent is None:
+            raise ValueError("매매가·전세 보증금·월세 중 하나는 적어 주세요.")
+        return self
+
+    def clean(self) -> dict:
+        data = super().clean()
+        data["complex_name"] = data["complex_name"] or data["title"]
+        return data
+
 
 class CustomerIn(_Clean):
+    """phone: 새 번호를 적을 때만 보낸다 (비우면 기존 번호 유지, 지우려면 clear_phone). 저장은 암호문으로만"""
     name: str = Field(..., min_length=1, max_length=50)
     deal_type: str = Field("매수", max_length=20)
     phone: str | None = Field(None, max_length=30)
-    budget_max: int | None = Field(None, ge=0, description="만원")
+    clear_phone: bool = False
+    budget_max: int | None = Field(None, ge=0, description="만원. 전세·월세 고객은 보증금 한도")
+    monthly_rent_max: int | None = Field(None, ge=0, le=10000, description="월세 고객의 월세 한도 (만원)")
     area_min: float | None = Field(None, ge=0)
     district: str | None = Field(None, max_length=30)
     station_walk_max: int | None = Field(None, ge=0, le=180)
     preferences: list[str] = []
     first_home: bool = False
+    privacy_consent: bool = Field(False, description="개인정보 수집·이용 동의를 받았는지")
 
     def clean(self) -> dict:
         data = super().clean()
         data["preferences"] = [p.strip() for p in self.preferences if p.strip()]
         data["deal_type"] = data["deal_type"] or "매수"
         return data
+
+
+class OwnerIn(_Clean):
+    name: str = Field(..., min_length=1, max_length=50)
+    phone: str | None = Field(None, max_length=30)
+    clear_phone: bool = False
+    relation: str = Field("본인", max_length=20)
+    memo: str | None = Field(None, max_length=500)
+    privacy_consent: bool = False
+
+
+class MandateIn(_Clean):
+    """매물의 의뢰 조건·방문 안내. owner_id(기존 의뢰인) 또는 owner(새 의뢰인) 중 하나.
+    tenant_phone·access: 새 값을 적을 때만 보낸다 (비우면 유지, 지우려면 clear_*)"""
+    owner_id: int | None = None
+    owner: OwnerIn | None = None
+    kind: Literal["general", "exclusive"] = "general"
+    starts_on: date | None = None
+    ends_on: date | None = None
+    price_flex: str | None = Field(None, max_length=200)
+    move_out: str | None = Field(None, max_length=100)
+    occupancy: Literal["vacant", "owner", "tenant"] = "vacant"
+    tenant_phone: str | None = Field(None, max_length=30)
+    clear_tenant_phone: bool = False
+    visit_rule: str | None = Field(None, max_length=300)
+    access: str | None = Field(None, max_length=200)
+    clear_access: bool = False
+
+    @model_validator(mode="after")
+    def _check(self):
+        if (self.owner_id is None) == (self.owner is None):
+            raise ValueError("의뢰인을 고르거나 새로 적어 주세요.")
+        if self.starts_on and self.ends_on and self.ends_on < self.starts_on:
+            raise ValueError("의뢰 만료일이 의뢰일보다 빠릅니다.")
+        return self
+
+
+class RevealIn(BaseModel):
+    field: Literal["owner_phone", "tenant_phone", "access"]
+
+
+class UserCreateIn(BaseModel):
+    name: str = Field(..., min_length=1, max_length=40)
+    email: str = Field(..., max_length=254)
+    password: str = Field(..., min_length=8, max_length=128)
+    role: Literal["agent", "admin"] = "agent"
+
+    @field_validator("email")
+    @classmethod
+    def _email(cls, v: str) -> str:
+        v = v.strip().lower()
+        if not _EMAIL.match(v):
+            raise ValueError("이메일 형식이 올바르지 않습니다.")
+        return v
+
+
+class DisableIn(BaseModel):
+    transfer_to: int = Field(..., description="고객·매물·진행 중 거래를 넘겨받을 중개사")
+
+
+class OfficeSettingsIn(BaseModel):
+    contact_owner_only: bool
 
 
 class CheckIn(BaseModel):
@@ -235,8 +338,8 @@ def _own_listing(user: CurrentUser, listing: dict):
 
 
 _CUSTOMER_SQL = f"""
-SELECT c.id, c.name, c.deal_type, c.phone, c.agent_id, u.name AS agent_name, c.budget_max, c.area_min::float AS area_min,
-       c.district, c.station_walk_max, c.preferences, c.first_home, c.created_at,
+SELECT c.id, c.name, c.deal_type, c.phone_last4, c.agent_id, u.name AS agent_name, c.budget_max, c.area_min::float AS area_min,
+       c.monthly_rent_max, c.privacy_consent_at, c.district, c.station_walk_max, c.preferences, c.first_home, c.created_at,
        (SELECT d.stage FROM deals d WHERE d.customer_id = c.id AND d.stage <> 'dropped'
         ORDER BY {drafting.STAGE_ORDER_SQL} DESC LIMIT 1) AS top_stage,
        (SELECT count(*) FROM deals d WHERE d.customer_id = c.id AND d.stage <> 'dropped')::int AS active_deals
@@ -245,18 +348,38 @@ WHERE c.tenant_id = %(tenant)s {{where}}
 ORDER BY c.created_at DESC, c.id DESC"""
 
 
-def _customers(conn, tenant_id: int, **filters) -> list[dict]:
+def _office(conn, tenant_id: int) -> dict:
+    row = conn.execute("SELECT contact_owner_only FROM office_settings WHERE tenant_id = %s", (tenant_id,)).fetchone()
+    return {"contact_owner_only": bool(row and row["contact_owner_only"])}
+
+
+def _can_see_contact(user: CurrentUser, agent_id: int, office: dict) -> bool:
+    return not office["contact_owner_only"] or user.role == "admin" or user.id == agent_id
+
+
+def _customers(conn, tenant_id: int, viewer: CurrentUser | None = None, **filters) -> list[dict]:
+    """연락처는 끝 4자리 가림 표시(phone)만 내보낸다. 사무소 설정이 '담당자만'이면 담당·관리자가 아닐 때 가림 표시도 숨긴다"""
     where, params = [], {"tenant": tenant_id}
     for col, val in filters.items():
         if val is not None:
             where.append(f"AND c.{col} = %({col})s")
             params[col] = val
     rows = conn.execute(_CUSTOMER_SQL.format(where=" ".join(where)), params).fetchall()
-    return [{**r, "created_at": r["created_at"].isoformat()} for r in rows]
+    office = _office(conn, tenant_id)
+    out = []
+    for r in rows:
+        r = dict(r)
+        last = r.pop("phone_last4")
+        visible = viewer is None or _can_see_contact(viewer, r["agent_id"], office)
+        consent = r.pop("privacy_consent_at")
+        out.append({**r, "phone": vault.masked(last) if visible else None, "has_phone": bool(last),
+                    "phone_hidden": bool(last) and not visible, "privacy_consent_at": consent.isoformat() if consent else None,
+                    "created_at": r["created_at"].isoformat()})
+    return out
 
 
 def _customer(conn, user: CurrentUser, cid: int) -> dict:
-    found = _customers(conn, user.tenant_id, id=cid)
+    found = _customers(conn, user.tenant_id, user, id=cid)
     if not found:
         raise HTTPException(404, "고객을 찾을 수 없습니다.")  # 다른 사무소 고객의 존재 여부도 알리지 않는다
     return found[0]
@@ -282,12 +405,14 @@ def _report(conn, user: CurrentUser, report_id: int, request: Request) -> dict:
 @router.post("/auth/login")
 def login(body: LoginIn):
     row = fetch_one(
-        """SELECT u.id, u.tenant_id, t.name AS tenant_name, u.name, u.email, u.role, u.password_hash
+        """SELECT u.id, u.tenant_id, t.name AS tenant_name, u.name, u.email, u.role, u.password_hash, u.active
            FROM users u JOIN tenants t ON t.id = u.tenant_id WHERE u.email = %s""",
         (body.email.strip().lower(),),
     )
     if not row or not verify_password(body.password, row.pop("password_hash")):
         raise HTTPException(401, "이메일 또는 비밀번호가 올바르지 않습니다.")
+    if not row.pop("active"):
+        raise HTTPException(403, "정지된 계정입니다. 사무소 관리자에게 문의하세요.")
     user = CurrentUser(**row)
     with tx() as conn:
         record(conn, tenant_id=user.tenant_id, user_id=user.id, event="auth.login", entity="user", entity_id=user.id)
@@ -325,17 +450,20 @@ def me(user: CurrentUser = Depends(current_user)):
 @router.get("/agents")
 def agents(user: CurrentUser = Depends(current_user)):
     with pool.connection() as conn:
-        return conn.execute("SELECT id, name, role FROM users WHERE tenant_id = %s ORDER BY role DESC, id", (user.tenant_id,)).fetchall()
+        return conn.execute("SELECT id, name, role FROM users WHERE tenant_id = %s AND active ORDER BY role DESC, id",
+                            (user.tenant_id,)).fetchall()
 
 
 # ---------- 매물 ----------
 
 @router.get("/listings")
 def list_listings(mine: bool = False, sort: Literal["price", "recent"] = "price", district: str | None = None,
-                  max_price: int | None = None, min_area: float | None = None, user: CurrentUser = Depends(current_user)):
+                  max_price: int | None = None, min_area: float | None = None,
+                  deal: Literal["sale", "jeonse", "monthly"] | None = None, user: CurrentUser = Depends(current_user)):
+    """deal을 주면 그 거래 종류로 내놓은 매물만, max_price는 그 종류의 금액(매매가·보증금)에 적용한다"""
     with pool.connection() as conn:
         items = drafting.fetch_listings(conn, user.tenant_id, district=district or None, max_price=max_price,
-                                        min_area=min_area, sort=sort, user_id=user.id, mine=mine)
+                                        min_area=min_area, sort=sort, user_id=user.id, mine=mine, deal=deal)
     return {"items": items, "total": len(items)}
 
 
@@ -419,17 +547,16 @@ def set_check(listing_id: int, key: str, body: CheckIn, user: CurrentUser = Depe
 
 @router.post("/listings", status_code=201)
 def create_listing(body: ListingIn, user: CurrentUser = Depends(current_user)):
+    data = body.clean()
     with tx() as conn:
         row = conn.execute(
-            """INSERT INTO listings (tenant_id, agent_id, label, title, complex_name, address, district, price, area_m2, floor,
-                                     station, station_walk_min, park_walk_min, lat, lng, description, source, source_date)
-               VALUES (%(tenant)s, %(user)s, %(label)s, %(title)s, %(complex_name)s, %(address)s, %(district)s, %(price)s,
-                       %(area_m2)s, %(floor)s, %(station)s, %(station_walk_min)s, %(park_walk_min)s, %(lat)s, %(lng)s,
-                       %(description)s, '중개사 직접 등록', current_date) RETURNING id""",
-            {**body.clean(), "tenant": user.tenant_id, "user": user.id, "label": drafting.next_label(conn, user.tenant_id)},
+            f"""INSERT INTO listings (tenant_id, agent_id, label, {", ".join(LISTING_FIELDS)}, source, source_date)
+                VALUES (%(tenant)s, %(user)s, %(label)s, {", ".join(f"%({k})s" for k in LISTING_FIELDS)},
+                        '중개사 직접 등록', current_date) RETURNING id""",
+            {**data, "tenant": user.tenant_id, "user": user.id, "label": drafting.next_label(conn, user.tenant_id)},
         ).fetchone()
         conn.execute("INSERT INTO listing_price_history (listing_id, price, changed_at) VALUES (%s, %s, current_date)",
-                     (row["id"], body.price))
+                     (row["id"], drafting.primary_amount(data)))
         record(conn, tenant_id=user.tenant_id, user_id=user.id, event="listing.created", entity="listing", entity_id=row["id"])
         return _listing(conn, user, row["id"])
 
@@ -439,19 +566,18 @@ def update_listing(listing_id: int, body: ListingIn, user: CurrentUser = Depends
     with tx() as conn:
         before = _listing(conn, user, listing_id)
         _own_listing(user, before)
+        data = body.clean()
         conn.execute(
-            """UPDATE listings SET title=%(title)s, complex_name=%(complex_name)s, address=%(address)s, district=%(district)s,
-                      price=%(price)s, area_m2=%(area_m2)s, floor=%(floor)s, station=%(station)s,
-                      station_walk_min=%(station_walk_min)s, park_walk_min=%(park_walk_min)s, lat=%(lat)s, lng=%(lng)s,
-                      description=%(description)s, source_date=current_date
-               WHERE id=%(id)s AND tenant_id=%(tenant)s""",
-            {**body.clean(), "id": listing_id, "tenant": user.tenant_id},
+            f"""UPDATE listings SET {", ".join(f"{k}=%({k})s" for k in LISTING_FIELDS)}, source_date=current_date
+                WHERE id=%(id)s AND tenant_id=%(tenant)s""",
+            {**data, "id": listing_id, "tenant": user.tenant_id},
         )
-        if body.price != before["price"]:
+        changed = drafting.primary_amount(data) != drafting.primary_amount(before)
+        if changed:
             conn.execute("INSERT INTO listing_price_history (listing_id, price, changed_at) VALUES (%s, %s, current_date)",
-                         (listing_id, body.price))
+                         (listing_id, drafting.primary_amount(data)))
         record(conn, tenant_id=user.tenant_id, user_id=user.id, event="listing.updated", entity="listing", entity_id=listing_id,
-               payload={"price_changed": body.price != before["price"]})
+               payload={"price_changed": changed})
         return _listing(conn, user, listing_id)
 
 
@@ -460,8 +586,147 @@ def close_listing(listing_id: int, user: CurrentUser = Depends(current_user)):
     with tx() as conn:
         _own_listing(user, _listing(conn, user, listing_id))
         conn.execute("UPDATE listings SET status = 'closed' WHERE id = %s AND tenant_id = %s", (listing_id, user.tenant_id))
+        # 거래가 끝난 매물의 출입 정보는 남겨 두지 않는다
+        conn.execute("UPDATE mandates SET access_enc = NULL WHERE listing_id = %s AND tenant_id = %s", (listing_id, user.tenant_id))
         record(conn, tenant_id=user.tenant_id, user_id=user.id, event="listing.closed", entity="listing", entity_id=listing_id)
         return _listing(conn, user, listing_id, include_closed=True)
+
+
+# ---------- 의뢰인(집주인)·의뢰 조건·방문 안내 ----------
+
+def _owner_out(r: dict, prefix: str = "") -> dict:
+    consent = r[f"{prefix}privacy_consent_at"]
+    return {"id": r[f"{prefix}id"], "name": r[f"{prefix}name"], "relation": r[f"{prefix}relation"], "memo": r[f"{prefix}memo"],
+            "phone": vault.masked(r[f"{prefix}phone_last4"]), "has_phone": bool(r[f"{prefix}phone_last4"]),
+            "privacy_consent_at": consent.isoformat() if consent else None}
+
+
+def _mandate(conn, tenant_id: int, listing_id: int) -> dict | None:
+    r = conn.execute(
+        """SELECT m.*, o.id AS o_id, o.name AS o_name, o.relation AS o_relation, o.memo AS o_memo, o.phone_last4 AS o_phone_last4,
+                  o.privacy_consent_at AS o_privacy_consent_at, u.name AS updated_by_name
+           FROM mandates m JOIN owners o ON o.id = m.owner_id LEFT JOIN users u ON u.id = m.updated_by
+           WHERE m.listing_id = %s AND m.tenant_id = %s""", (listing_id, tenant_id)).fetchone()
+    if not r:
+        return None
+    return {"owner": _owner_out(r, "o_"), "kind": r["kind"],
+            "starts_on": str(r["starts_on"]) if r["starts_on"] else None,
+            "ends_on": str(r["ends_on"]) if r["ends_on"] else None,
+            "days_left": (r["ends_on"] - date.today()).days if r["ends_on"] else None,
+            "price_flex": r["price_flex"], "move_out": r["move_out"], "occupancy": r["occupancy"],
+            "tenant_phone": vault.masked(r["tenant_phone_last4"]), "has_tenant_phone": bool(r["tenant_phone_last4"]),
+            "visit_rule": r["visit_rule"], "has_access": bool(r["access_enc"]),
+            "updated_by": r["updated_by_name"], "updated_at": r["updated_at"].isoformat()}
+
+
+def _new_owner(conn, user: CurrentUser, o: OwnerIn) -> int:
+    d = o.clean()
+    return conn.execute(
+        """INSERT INTO owners (tenant_id, name, phone_enc, phone_last4, relation, memo, privacy_consent_at, created_by)
+           VALUES (%s, %s, %s, %s, %s, %s, CASE WHEN %s THEN now() END, %s) RETURNING id""",
+        (user.tenant_id, d["name"], vault.seal(d["phone"]), vault.last4(d["phone"]), d["relation"] or "본인", d["memo"],
+         d["privacy_consent"], user.id)).fetchone()["id"]
+
+
+@router.get("/owners")
+def list_owners(q: str | None = None, user: CurrentUser = Depends(current_user)):
+    """의뢰인 고르기용 목록 (연락처는 가림 표시). q: 이름 일부"""
+    with pool.connection() as conn:
+        rows = conn.execute(
+            """SELECT o.*, (SELECT count(*) FROM mandates m WHERE m.owner_id = o.id)::int AS listings
+               FROM owners o WHERE o.tenant_id = %s AND (%s::text IS NULL OR o.name ILIKE '%%' || %s || '%%')
+               ORDER BY o.created_at DESC, o.id DESC LIMIT 50""", (user.tenant_id, q or None, q or None)).fetchall()
+    return [{**_owner_out(r), "listings": r["listings"]} for r in rows]
+
+
+@router.put("/owners/{owner_id}")
+def update_owner(owner_id: int, body: OwnerIn, user: CurrentUser = Depends(current_user)):
+    """의뢰인 정보 수정: 관리자, 등록한 사람, 이 의뢰인이 맡긴 매물의 담당 중개사"""
+    d = body.clean()
+    with tx() as conn:
+        o = conn.execute("SELECT * FROM owners WHERE id = %s AND tenant_id = %s", (owner_id, user.tenant_id)).fetchone()
+        if not o:
+            raise HTTPException(404, "의뢰인을 찾을 수 없습니다.")
+        mine = conn.execute("""SELECT 1 FROM mandates m JOIN listings l ON l.id = m.listing_id
+                               WHERE m.owner_id = %s AND l.agent_id = %s LIMIT 1""", (owner_id, user.id)).fetchone()
+        if not (user.role == "admin" or o["created_by"] == user.id or mine):
+            raise HTTPException(403, "관리자나 이 의뢰인 매물의 담당 중개사만 고칠 수 있습니다.")
+        conn.execute(
+            """UPDATE owners SET name=%s, relation=%s, memo=%s,
+                      privacy_consent_at = CASE WHEN %s THEN COALESCE(privacy_consent_at, now()) END WHERE id=%s""",
+            (d["name"], d["relation"] or "본인", d["memo"], d["privacy_consent"], owner_id))
+        if d["phone"] or d["clear_phone"]:
+            conn.execute("UPDATE owners SET phone_enc=%s, phone_last4=%s WHERE id=%s",
+                         (vault.seal(d["phone"]), vault.last4(d["phone"]), owner_id))
+        record(conn, tenant_id=user.tenant_id, user_id=user.id, event="owner.updated", entity="owner", entity_id=owner_id)
+        r = conn.execute("SELECT * FROM owners WHERE id = %s", (owner_id,)).fetchone()
+        return _owner_out(r)
+
+
+@router.get("/listings/{listing_id}/mandate")
+def get_mandate(listing_id: int, user: CurrentUser = Depends(current_user)):
+    """의뢰인·의뢰 조건·방문 안내. 사무소 누구나 볼 수 있고(방문 약속에 필요), 연락처·출입 정보는 가림 표시만"""
+    with pool.connection() as conn:
+        listing = _listing(conn, user, listing_id, include_closed=True)
+        return {"mandate": _mandate(conn, user.tenant_id, listing_id), "can_edit": listing["mine"] or user.role == "admin"}
+
+
+@router.put("/listings/{listing_id}/mandate")
+def save_mandate(listing_id: int, body: MandateIn, user: CurrentUser = Depends(current_user)):
+    with tx() as conn:
+        listing = _listing(conn, user, listing_id)
+        _own_listing(user, listing)
+        if body.owner is not None:
+            owner_id = _new_owner(conn, user, body.owner)
+        else:
+            if not conn.execute("SELECT 1 FROM owners WHERE id = %s AND tenant_id = %s", (body.owner_id, user.tenant_id)).fetchone():
+                raise HTTPException(404, "의뢰인을 찾을 수 없습니다.")
+            owner_id = body.owner_id
+        d = body.clean()
+        conn.execute(
+            """INSERT INTO mandates (listing_id, tenant_id, owner_id, kind, starts_on, ends_on, price_flex, move_out, occupancy,
+                                     visit_rule, updated_by, updated_at)
+               VALUES (%(lid)s, %(tenant)s, %(owner)s, %(kind)s, %(starts_on)s, %(ends_on)s, %(price_flex)s, %(move_out)s,
+                       %(occupancy)s, %(visit_rule)s, %(user)s, now())
+               ON CONFLICT (listing_id) DO UPDATE SET owner_id=EXCLUDED.owner_id, kind=EXCLUDED.kind,
+                   starts_on=EXCLUDED.starts_on, ends_on=EXCLUDED.ends_on, price_flex=EXCLUDED.price_flex,
+                   move_out=EXCLUDED.move_out, occupancy=EXCLUDED.occupancy, visit_rule=EXCLUDED.visit_rule,
+                   updated_by=EXCLUDED.updated_by, updated_at=now()""",
+            {**d, "lid": listing_id, "tenant": user.tenant_id, "owner": owner_id, "user": user.id})
+        if d["tenant_phone"] or d["clear_tenant_phone"] or d["occupancy"] != "tenant":
+            phone = d["tenant_phone"] if d["occupancy"] == "tenant" else None
+            conn.execute("UPDATE mandates SET tenant_phone_enc=%s, tenant_phone_last4=%s WHERE listing_id=%s",
+                         (vault.seal(phone), vault.last4(phone), listing_id))
+        if d["access"] or d["clear_access"]:
+            conn.execute("UPDATE mandates SET access_enc=%s WHERE listing_id=%s", (vault.seal(d["access"]), listing_id))
+        record(conn, tenant_id=user.tenant_id, user_id=user.id, event="listing.mandate_saved", entity="listing",
+               entity_id=listing_id, payload={"owner_id": owner_id, "kind": d["kind"], "occupancy": d["occupancy"]})
+        return {"mandate": _mandate(conn, user.tenant_id, listing_id), "can_edit": True}
+
+
+@router.delete("/listings/{listing_id}/mandate")
+def delete_mandate(listing_id: int, user: CurrentUser = Depends(current_user)):
+    with tx() as conn:
+        _own_listing(user, _listing(conn, user, listing_id, include_closed=True))
+        conn.execute("DELETE FROM mandates WHERE listing_id = %s AND tenant_id = %s", (listing_id, user.tenant_id))
+        record(conn, tenant_id=user.tenant_id, user_id=user.id, event="listing.mandate_deleted", entity="listing", entity_id=listing_id)
+    return {"deleted": listing_id}
+
+
+@router.post("/listings/{listing_id}/mandate/reveal")
+def reveal_mandate(listing_id: int, body: RevealIn, user: CurrentUser = Depends(current_user)):
+    """의뢰인·세입자 연락처나 출입 정보 원문을 한 번 보여 준다. 볼 때마다 감사 기록(무엇을 봤는지만, 값은 기록하지 않음)"""
+    with tx() as conn:
+        _listing(conn, user, listing_id, include_closed=True)
+        r = conn.execute("""SELECT o.phone_enc AS owner_phone, m.tenant_phone_enc AS tenant_phone, m.access_enc AS access
+                            FROM mandates m JOIN owners o ON o.id = m.owner_id
+                            WHERE m.listing_id = %s AND m.tenant_id = %s""", (listing_id, user.tenant_id)).fetchone()
+        value = vault.unseal(r[body.field]) if r else None
+        if not value:
+            raise HTTPException(404, "저장된 정보가 없습니다.")
+        record(conn, tenant_id=user.tenant_id, user_id=user.id, event="listing.secret_viewed", entity="listing",
+               entity_id=listing_id, payload={"field": body.field})
+        return {"value": value}
 
 
 # ---------- 고객 ----------
@@ -469,7 +734,7 @@ def close_listing(listing_id: int, user: CurrentUser = Depends(current_user)):
 @router.get("/customers")
 def list_customers(mine: bool = False, user: CurrentUser = Depends(current_user)):
     with pool.connection() as conn:
-        return _customers(conn, user.tenant_id, agent_id=user.id if mine else None)
+        return _customers(conn, user.tenant_id, user, agent_id=user.id if mine else None)
 
 
 @router.get("/customers/{cid}")
@@ -492,13 +757,16 @@ def get_customer(cid: int, user: CurrentUser = Depends(current_user)):
 
 @router.post("/customers", status_code=201)
 def create_customer(body: CustomerIn, user: CurrentUser = Depends(current_user)):
+    data = body.clean()
     with tx() as conn:
         row = conn.execute(
-            """INSERT INTO customers (tenant_id, agent_id, name, deal_type, phone, budget_max, area_min, district,
-                                      station_walk_max, preferences, first_home)
-               VALUES (%(tenant)s, %(user)s, %(name)s, %(deal_type)s, %(phone)s, %(budget_max)s, %(area_min)s, %(district)s,
-                       %(station_walk_max)s, %(preferences)s, %(first_home)s) RETURNING id""",
-            {**body.clean(), "tenant": user.tenant_id, "user": user.id}).fetchone()
+            """INSERT INTO customers (tenant_id, agent_id, name, deal_type, phone_enc, phone_last4, budget_max, monthly_rent_max,
+                                      area_min, district, station_walk_max, preferences, first_home, privacy_consent_at)
+               VALUES (%(tenant)s, %(user)s, %(name)s, %(deal_type)s, %(phone_enc)s, %(phone_last4)s, %(budget_max)s,
+                       %(monthly_rent_max)s, %(area_min)s, %(district)s, %(station_walk_max)s, %(preferences)s, %(first_home)s,
+                       CASE WHEN %(privacy_consent)s THEN now() END) RETURNING id""",
+            {**data, "phone_enc": vault.seal(data["phone"]), "phone_last4": vault.last4(data["phone"]),
+             "tenant": user.tenant_id, "user": user.id}).fetchone()
         workflow.log_activity(conn, row["id"], user.id, "고객 등록")
         record(conn, tenant_id=user.tenant_id, user_id=user.id, event="customer.created", entity="customer", entity_id=row["id"])
         return _customer(conn, user, row["id"])
@@ -507,16 +775,38 @@ def create_customer(body: CustomerIn, user: CurrentUser = Depends(current_user))
 @router.put("/customers/{cid}")
 def update_customer(cid: int, body: CustomerIn, user: CurrentUser = Depends(current_user)):
     with tx() as conn:
-        _customer(conn, user, cid)
+        before = _customer(conn, user, cid)
         data = body.clean()
+        if (data["phone"] or data["clear_phone"]) and before["phone_hidden"]:
+            raise HTTPException(403, "이 고객의 연락처는 담당 중개사나 관리자만 바꿀 수 있습니다.")
         conn.execute(
-            """UPDATE customers SET name=%(name)s, deal_type=%(deal_type)s, phone=%(phone)s, budget_max=%(budget_max)s,
-                      area_min=%(area_min)s, district=%(district)s, station_walk_max=%(station_walk_max)s,
-                      preferences=%(preferences)s, first_home=%(first_home)s WHERE id=%(id)s AND tenant_id=%(tenant)s""",
+            """UPDATE customers SET name=%(name)s, deal_type=%(deal_type)s, budget_max=%(budget_max)s,
+                      monthly_rent_max=%(monthly_rent_max)s, area_min=%(area_min)s, district=%(district)s,
+                      station_walk_max=%(station_walk_max)s, preferences=%(preferences)s, first_home=%(first_home)s,
+                      privacy_consent_at = CASE WHEN %(privacy_consent)s THEN COALESCE(privacy_consent_at, now()) END
+               WHERE id=%(id)s AND tenant_id=%(tenant)s""",
             {**data, "id": cid, "tenant": user.tenant_id})
+        if data["phone"] or data["clear_phone"]:
+            conn.execute("UPDATE customers SET phone_enc = %s, phone_last4 = %s WHERE id = %s",
+                         (vault.seal(data["phone"]), vault.last4(data["phone"]), cid))
         workflow.log_activity(conn, cid, user.id, "찾는 조건 수정")
         record(conn, tenant_id=user.tenant_id, user_id=user.id, event="customer.updated", entity="customer", entity_id=cid)
         return {"customer": _customer(conn, user, cid), "warnings": drafting.condition_warnings(conn, user.tenant_id, data)}
+
+
+@router.post("/customers/{cid}/phone")
+def reveal_customer_phone(cid: int, user: CurrentUser = Depends(current_user)):
+    """연락처 원문을 한 번 보여 준다. 볼 때마다 감사 기록을 남긴다 (번호는 기록하지 않음)"""
+    with tx() as conn:
+        c = _customer(conn, user, cid)
+        if c["phone_hidden"]:
+            raise HTTPException(403, "이 고객의 연락처는 담당 중개사나 관리자만 볼 수 있습니다.")
+        row = conn.execute("SELECT phone_enc FROM customers WHERE id = %s", (cid,)).fetchone()
+        phone = vault.unseal(row["phone_enc"])
+        if not phone:
+            raise HTTPException(404, "저장된 연락처가 없습니다.")
+        record(conn, tenant_id=user.tenant_id, user_id=user.id, event="customer.phone_viewed", entity="customer", entity_id=cid)
+        return {"phone": phone}
 
 
 @router.post("/customers/{cid}/activities", status_code=201)
@@ -779,6 +1069,104 @@ def evidence_detail(chunk_id: str, user: CurrentUser = Depends(current_user)):
 
 
 # ---------- 운영 ----------
+
+@router.get("/office/settings")
+def get_office_settings(user: CurrentUser = Depends(current_user)):
+    with pool.connection() as conn:
+        return _office(conn, user.tenant_id)
+
+
+@router.put("/office/settings")
+def put_office_settings(body: OfficeSettingsIn, user: CurrentUser = Depends(require_admin)):
+    with tx() as conn:
+        conn.execute("""INSERT INTO office_settings (tenant_id, contact_owner_only, updated_by, updated_at) VALUES (%s, %s, %s, now())
+                        ON CONFLICT (tenant_id) DO UPDATE SET contact_owner_only = EXCLUDED.contact_owner_only,
+                            updated_by = EXCLUDED.updated_by, updated_at = now()""",
+                     (user.tenant_id, body.contact_owner_only, user.id))
+        record(conn, tenant_id=user.tenant_id, user_id=user.id, event="office.settings_updated", entity="tenant",
+               entity_id=user.tenant_id, payload={"contact_owner_only": body.contact_owner_only})
+        return _office(conn, user.tenant_id)
+
+
+_USERS_SQL = """
+SELECT u.id, u.name, u.email, u.role, u.active, u.disabled_at,
+       (SELECT count(*) FROM customers c WHERE c.agent_id = u.id)::int AS customers,
+       (SELECT count(*) FROM listings l WHERE l.agent_id = u.id AND l.status = 'active')::int AS listings,
+       (SELECT count(*) FROM deals d WHERE d.agent_id = u.id AND d.stage NOT IN ('done', 'dropped'))::int AS deals
+FROM users u WHERE u.tenant_id = %s {where} ORDER BY u.active DESC, u.role DESC, u.id"""
+
+
+def _users(conn, tenant_id: int, uid: int | None = None) -> list[dict]:
+    rows = conn.execute(_USERS_SQL.format(where="AND u.id = %s" if uid else ""),
+                        (tenant_id, uid) if uid else (tenant_id,)).fetchall()
+    return [{**r, "disabled_at": r["disabled_at"].isoformat() if r["disabled_at"] else None} for r in rows]
+
+
+@router.get("/admin/users")
+def admin_users(user: CurrentUser = Depends(require_admin)):
+    with pool.connection() as conn:
+        return _users(conn, user.tenant_id)
+
+
+@router.post("/admin/users", status_code=201)
+def admin_create_user(body: UserCreateIn, user: CurrentUser = Depends(require_admin)):
+    """사무소에 중개사 계정을 만든다. 처음 비밀번호는 관리자가 정해 전달한다"""
+    try:
+        with tx() as conn:
+            if conn.execute("SELECT 1 FROM users WHERE email = %s", (body.email,)).fetchone():
+                raise HTTPException(409, "이미 쓰는 이메일입니다.")
+            row = conn.execute("""INSERT INTO users (tenant_id, email, name, role, password_hash)
+                                  VALUES (%s, %s, %s, %s, %s) RETURNING id""",
+                               (user.tenant_id, body.email, body.name.strip(), body.role, hash_password(body.password))).fetchone()
+            record(conn, tenant_id=user.tenant_id, user_id=user.id, event="user.created", entity="user", entity_id=row["id"],
+                   payload={"role": body.role})
+            return _users(conn, user.tenant_id, row["id"])[0]
+    except psycopg.errors.UniqueViolation:
+        raise HTTPException(409, "이미 쓰는 이메일입니다.") from None
+
+
+@router.post("/admin/users/{uid}/disable")
+def admin_disable_user(uid: int, body: DisableIn, user: CurrentUser = Depends(require_admin)):
+    """계정을 정지하고(로그인·기존 토큰 즉시 차단) 고객·매물·진행 중 거래를 다른 중개사에게 넘긴다"""
+    with tx() as conn:
+        target = conn.execute("SELECT id, name, role, active FROM users WHERE id = %s AND tenant_id = %s",
+                              (uid, user.tenant_id)).fetchone()
+        if not target:
+            raise HTTPException(404, "계정을 찾을 수 없습니다.")
+        if uid == user.id:
+            raise HTTPException(422, "자기 계정은 정지할 수 없습니다.")
+        if not target["active"]:
+            raise HTTPException(409, "이미 정지된 계정입니다.")
+        heir = conn.execute("SELECT id, name FROM users WHERE id = %s AND tenant_id = %s AND active",
+                            (body.transfer_to, user.tenant_id)).fetchone()
+        if not heir or heir["id"] == uid:
+            raise HTTPException(422, "넘겨받을 중개사는 같은 사무소의 다른 활성 계정이어야 합니다.")
+        moved_customers = conn.execute("UPDATE customers SET agent_id = %s WHERE agent_id = %s AND tenant_id = %s RETURNING id",
+                                       (heir["id"], uid, user.tenant_id)).fetchall()
+        moved_listings = conn.execute("UPDATE listings SET agent_id = %s WHERE agent_id = %s AND tenant_id = %s RETURNING id",
+                                      (heir["id"], uid, user.tenant_id)).fetchall()
+        moved_deals = conn.execute(
+            """UPDATE deals SET agent_id = %s WHERE agent_id = %s AND tenant_id = %s AND stage NOT IN ('done', 'dropped')
+               RETURNING id""", (heir["id"], uid, user.tenant_id)).fetchall()
+        for c in moved_customers:
+            workflow.log_activity(conn, c["id"], user.id, f"담당 중개사 변경: {target['name']} → {heir['name']} (계정 정지에 따른 인계)")
+        conn.execute("UPDATE users SET active = false, disabled_at = now() WHERE id = %s", (uid,))
+        record(conn, tenant_id=user.tenant_id, user_id=user.id, event="user.disabled", entity="user", entity_id=uid,
+               payload={"transfer_to": heir["id"], "customers": len(moved_customers), "listings": len(moved_listings),
+                        "deals": len(moved_deals)})
+        return {"user": _users(conn, user.tenant_id, uid)[0],
+                "moved": {"customers": len(moved_customers), "listings": len(moved_listings), "deals": len(moved_deals)}}
+
+
+@router.post("/admin/users/{uid}/enable")
+def admin_enable_user(uid: int, user: CurrentUser = Depends(require_admin)):
+    with tx() as conn:
+        if not conn.execute("UPDATE users SET active = true, disabled_at = NULL WHERE id = %s AND tenant_id = %s RETURNING id",
+                            (uid, user.tenant_id)).fetchone():
+            raise HTTPException(404, "계정을 찾을 수 없습니다.")
+        record(conn, tenant_id=user.tenant_id, user_id=user.id, event="user.enabled", entity="user", entity_id=uid)
+        return _users(conn, user.tenant_id, uid)[0]
+
 
 @router.get("/public-config")
 def public_config():
